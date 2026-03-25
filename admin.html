@@ -432,6 +432,8 @@
         };
 
         const State = { token: null };
+        // ★追加：データを保持するローカルストア
+        const Store = { items: [], categories: [], loans: [], users: [], audit: [] };
 
         function getElement(id) { return document.getElementById(id); }
 
@@ -459,9 +461,6 @@
             return { show, hide };
         })();
 
-        // ==========================================
-        // GAS用 fetch コアロジック
-        // ==========================================
         async function fetchJSON(path, opt = {}) {
             const method = opt.method || 'GET';
             let url = GAS_URL;
@@ -469,24 +468,16 @@
             const token = localStorage.getItem('lab_server_admin_token') || State.token;
             
             if (method === 'GET') {
-                // GETリクエスト: pathとtokenをクエリパラメータに
-                const separator = path.includes('?') ? '&' : '?';
                 url += `?path=${encodeURIComponent(path.split('?')[0])}`;
                 if (path.includes('?')) url += `&${path.split('?')[1]}`;
                 if (token) url += `&token=${token}`;
                 init.method = 'GET';
             } else {
-                // POST等: ペイロードに_methodや_pathを含める (CORS対応でtext/plainで送信)
                 init.method = 'POST';
                 init.headers = { ...(opt.headers || {}), 'Content-Type': 'text/plain' }; 
                 
                 let payload = {};
-                // FormData変換ヘルパー (GAS制約用)
-                if (opt.body instanceof FormData) {
-                     for (let [key, value] of opt.body.entries()) {
-                         if (!(value instanceof File)) payload[key] = value;
-                     }
-                } else if (opt.body && typeof opt.body === 'string') {
+                if (opt.body && typeof opt.body === 'string') {
                      try { payload = JSON.parse(opt.body); } catch(e) {}
                 } else if (opt.body && typeof opt.body === 'object') {
                      payload = opt.body;
@@ -509,7 +500,7 @@
                 }
                 if (ct.includes('json')) {
                     const data = await r.json();
-                    if (data && data.detail) { // エラーレスポンスを200で返した場合のハンドリング
+                    if (data && data.detail) {
                         Toast.error(`${path}：${data.detail}`); throw new Error(data.detail);
                     }
                     return data.items !== undefined ? data.items : data;
@@ -518,21 +509,35 @@
             } catch(e) { console.error(e); throw e; }
         }
 
-        // tryFetchSequentialの互換性維持（GASは単一エンドポイントのため第一引数のみ使用）
-        async function tryFetchSequential(candidates, makeInit) {
-            const path = candidates[0];
-            const opt = makeInit ? makeInit(path) : {};
-            return await fetchJSON(path, opt);
-        }
+        // ★追加：一括データ同期関数
+        async function refreshAll() {
+            if (!State.token) return;
+            try {
+                document.body.style.cursor = 'wait';
+                const data = await fetchJSON('/sync');
+                Store.items = data.items || [];
+                Store.categories = data.categories || [];
+                Store.loans = data.loans || [];
+                Store.users = data.users || [];
+                Store.audit = data.audit || [];
+                document.body.style.cursor = 'default';
 
-        // withAuthはfetchJSONに統合されたのでダミー
-        function withAuth(init={}) { return init; }
+                // 現在開いているタブを再描画
+                const activeTab = localStorage.getItem('admin.tab') || 'Inventory';
+                if (activeTab === 'Inventory') Inventory.load();
+                if (activeTab === 'Loans') Loans.load();
+                if (activeTab === 'Users') Users.load();
+                if (activeTab === 'Audit') Audit.load();
+            } catch (e) {
+                document.body.style.cursor = 'default';
+            }
+        }
 
         function fmtDate(s){ if(!s) return ""; try{ return new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium', timeStyle:'medium', timeZone:'Asia/Tokyo'}).format(new Date(s)); }catch{ return new Date(s).toLocaleString('ja-JP'); } }
         function escapeHtml(str){ return (str??"").toString().replace(/[&<>"']/g, s=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[s])); }
         function ymdToLocalDate(ymd){ if(!ymd) return null; const [y,m,d]=ymd.split('-').map(n=>parseInt(n,10)); return new Date(y,(m||1)-1,(d||1),0,0,0,0); }
         function ceilDaysDiff(fromDate,toDate){ return Math.ceil((toDate-fromDate)/(1000*60*60*24)); }
-        function boolMark(v){ return v ? '<span class="pill ok">○</span>' : '<span class="pill ng">―</span>'; }
+        function boolMark(v){ return (v===true || v==='true') ? '<span class="pill ok">○</span>' : '<span class="pill ng">―</span>'; }
         function onEnter(id, handler){ const el=getElement(id); if(!el) return; el.addEventListener('keydown', ev=>{ if(ev.key==='Enter') handler(); }); }
         function debounce(fn, ms=300){ let t=null; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
 
@@ -587,13 +592,14 @@
             const password = getElement('loginPass').value;
             const btn = getElement('btnLogin'); btn.disabled=true;
             try{
-                // GAS版ではJSONで投げる
                 const r = await fetchJSON(URL_CONFIG.ADMIN_TOKEN, { method:'POST', body: JSON.stringify({username, password}) });
                 State.token = r.access_token;
                 localStorage.setItem('lab_server_admin_token', State.token);
                 DOM.loginSec.style.display='none';
                 DOM.btnLogout.style.display='inline-block';
                 DOM.tabs.style.display='flex';
+                
+                await refreshAll(); // ★ログイン時に全データ同期
                 Router.show('Inventory');
                 Toast.ok('ログインしました');
             } finally { btn.disabled=false; }
@@ -601,11 +607,11 @@
         function logout(){ State.token=null; localStorage.removeItem('lab_server_admin_token'); location.reload(); }
 
         const Inventory = (()=>{
-            let allItems=[]; let activeCategories=new Set(); let knownCategories=[];
-            function deriveCategories(items){
+            let activeCategories=new Set(); let knownCategories=[];
+            function deriveCategories(){
                 const set=new Set();
-                (items||[]).forEach(r=>{
-                    const catName = r.category_name || (r.labels && r.labels[0]) || null;
+                Store.items.forEach(r=>{
+                    const catName = r.category_name || null;
                     if(catName) set.add(String(catName));
                 });
                 knownCategories=Array.from(set).sort();
@@ -619,29 +625,34 @@
                     DOM.labelChips.appendChild(b);
                 });
             }
-            function passCategoryFilter(r){
-                if(activeCategories.size===0) return true;
-                const catName = r.category_name || (r.labels && r.labels[0]) || '';
-                return activeCategories.has(String(catName));
-            }
-            async function load(){
-                const q=DOM.q.value.trim();
-                const url=q?`${URL_CONFIG.INVENTORY}?q=${encodeURIComponent(q)}`:URL_CONFIG.INVENTORY;
-                try {
-                    const rows=await fetchJSON(url);
-                    allItems=Array.isArray(rows)?rows:[];
-                    deriveCategories(allItems);
-                    renderCategoryChips();
-                    renderTable();
-                } catch(e) { Toast.error(`在庫ロード失敗: ${e.message}`); }
+            
+            // ★通信廃止：ローカルストアから表示
+            function load(){
+                deriveCategories();
+                renderCategoryChips();
+                renderTable();
             }
             function clearFilters(){ activeCategories.clear(); DOM.q.value=''; renderCategoryChips(); renderTable(); }
             function renderTable(){
+                const q = DOM.q.value.trim().toLowerCase();
                 const tb=DOM.itemsTable.querySelector('tbody'); tb.innerHTML='';
-                const filtered=allItems.filter(passCategoryFilter);
+                
+                let filtered = Store.items;
+                if(activeCategories.size > 0) {
+                    filtered = filtered.filter(r => activeCategories.has(String(r.category_name || '')));
+                }
+                if(q) {
+                    filtered = filtered.filter(r => 
+                        (r.product_name||'').toLowerCase().includes(q) ||
+                        (r.manufacturer||'').toLowerCase().includes(q) ||
+                        (r.code||'').toLowerCase().includes(q) ||
+                        String(r.id).includes(q)
+                    );
+                }
+
                 filtered.forEach(r=>{
                     const tr=document.createElement('tr');
-                    const categoryDisplay = escapeHtml(r.category_name || (r.labels && r.labels[0]) || '');
+                    const categoryDisplay = escapeHtml(r.category_name || '');
                     tr.innerHTML=`
                         <td>${r.id}</td><td>${escapeHtml(r.code||'')}</td><td>${escapeHtml(r.manufacturer||'')}</td>
                         <td>${escapeHtml(r.product_name||'')}</td><td>${escapeHtml(r.model_number||'')}</td>
@@ -658,13 +669,12 @@
                     const category_name=DOM.iLabels.value.trim()||null;
                     let category_id = null;
                     if(category_name) {
-                        const categories = await fetchJSON(URL_CONFIG.CATEGORIES);
-                        let category = categories.find(c => c.name === category_name);
+                        let category = Store.categories.find(c => c.name === category_name);
                         if (!category) {
                             try {
                                 const newCatRes = await fetchJSON(URL_CONFIG.ADMIN_CATEGORIES, { method: 'POST', body: JSON.stringify({name: category_name}) });
                                 category = newCatRes; Toast.info(`新カテゴリ '${category_name}' を作成しました．`); 
-                            } catch (e) { console.error("Category creation failed:", e); }
+                            } catch (e) {}
                         }
                         if (category) category_id = category.id;
                     }
@@ -677,14 +687,18 @@
                     const created=await fetchJSON(URL_CONFIG.ADMIN_ITEMS,{method:'POST', body:JSON.stringify(body)});
                     Toast.ok(`追加しました（ID=${created.id||'?'}／コード=${created.code||'?'}）`);
                     DOM.iMaker.value=''; DOM.iName.value=''; DOM.iModel.value=''; DOM.iStock.value='1'; DOM.iLocation.value=''; DOM.iLabels.value=''; DOM.iBuy.value=''; DOM.iCons.value=''; DOM.iAcc.value='';
-                    await load();
+                    
+                    await refreshAll(); // ★追加・編集後は全体同期
                 } finally { btn.disabled=false; }
             }
-            let current=null;
+            
             async function openDetail(id){
                 DOM.detailBackdrop.style.display='block'; DOM.detailDrawer.classList.add('open');
                 try {
-                    const item=await fetchJSON(URL_CONFIG.ADMIN_ITEM_DETAIL(id)); current=item;
+                    // ★通信廃止：ローカルストアから即時表示
+                    const item = Store.items.find(i => String(i.id) === String(id));
+                    if(!item) throw new Error("見つかりません");
+
                     DOM.d_media.innerHTML=''; const imgUrl=(item.images&&item.images[0])||item.image_url||'';
                     if(imgUrl){ const img=new Image(); img.src=imgUrl; img.alt=item.product_name||'image'; DOM.d_media.appendChild(img); }
                     else{ DOM.d_media.innerHTML=`<span class="muted">No image</span>`; }
@@ -701,14 +715,19 @@
                         return `<div class="key">${label}</div><div>${valHtml}</div>`;
                     }).join('');
                     DOM.d_buy.value=item.purchase_url||''; DOM.d_cons.value=item.consumables_url||''; DOM.d_acc.value=item.accessories||'';
-                    try{
-                        // GAS版で未実装の可能性も考慮
-                        const borrowers=await fetchJSON(`/items/${item.id}/borrowers`);
-                        DOM.d_borrowers.innerHTML = borrowers.length ? borrowers.map(lo=>`<div>・${escapeHtml(String(lo.user_name||'不明'))}（${fmtDate(lo.loaned_at||'')}〜）</div>`).join('') : '<span class="muted">現在の借用者はいません</span>';
-                    }catch{ DOM.d_borrowers.innerHTML='<span class="muted">取得できませんでした</span>'; }
+                    
+                    // ★通信廃止：ローカルのloansから現在の借り手を算出
+                    const borrowers = Store.loans.filter(l => String(l.item_id) === String(item.id) && !l.returned_at);
+                    DOM.d_borrowers.innerHTML = borrowers.length ? borrowers.map(lo=>`<div>・${escapeHtml(String(lo.borrower||'不明'))}（${fmtDate(lo.loaned_at||'')}〜）</div>`).join('') : '<span class="muted">現在の借用者はいません</span>';
+                    
                     DOM.d_toggleBtn.textContent=lendable?'貸出停止':'貸出停止解除';
                     DOM.d_toggleBtn.onclick=async ()=>{
-                        try{ await fetchJSON(URL_CONFIG.ADMIN_ITEM_DETAIL(item.id),{method:'PATCH',body:JSON.stringify({available:!lendable})}); Toast.ok('状態を更新しました'); await openDetail(item.id); await load(); }catch{}
+                        try{ 
+                            await fetchJSON(URL_CONFIG.ADMIN_ITEM_DETAIL(item.id),{method:'PATCH',body:JSON.stringify({available:!lendable})}); 
+                            Toast.ok('状態を更新しました'); 
+                            await refreshAll(); // ★同期
+                            await openDetail(item.id); 
+                        }catch{}
                     };
                     DOM.d_saveBtn.onclick=async ()=>{
                         try{
@@ -719,13 +738,11 @@
                                 else if(inp.dataset.k==='stock'){ patch.stock=Number(inp.value||0); }
                                 else{ patch[inp.dataset.k]=inp.value; }
                             });
-                            // カテゴリ名の処理
                             if('category_name' in patch){
                                 const cat_name = patch.category_name; delete patch.category_name;
                                 let category_id = null;
                                 if(cat_name){
-                                    const cats = await fetchJSON(URL_CONFIG.CATEGORIES);
-                                    let category = cats.find(c => c.name === cat_name);
+                                    let category = Store.categories.find(c => c.name === cat_name);
                                     if (!category) {
                                         try {
                                             const newCatRes = await fetchJSON(URL_CONFIG.ADMIN_CATEGORIES, { method: 'POST', body: JSON.stringify({name:cat_name}) });
@@ -737,24 +754,26 @@
                                 patch.category_id = category_id;
                             }
                             patch.purchase_url=DOM.d_buy.value||null; patch.consumables_url=DOM.d_cons.value||null; patch.accessories=DOM.d_acc.value||null;
+                            
                             await fetchJSON(URL_CONFIG.ADMIN_ITEM_DETAIL(item.id),{method:'PATCH',body:JSON.stringify(patch)});
-                            Toast.ok('更新しました'); await openDetail(item.id); await load();
+                            Toast.ok('更新しました'); 
+                            await refreshAll(); // ★同期
+                            await openDetail(item.id);
                         }catch(e){ Toast.error(`保存失敗: ${e.message}`); }
                     };
                     DOM.d_deleteBtn.onclick=async ()=>{
                         const ok=await Confirm.show(`ID ${item.id} を削除します．よろしいですか？`); if(!ok) return;
-                        try{ await fetchJSON(URL_CONFIG.ADMIN_ITEM_DETAIL(item.id),{method:'DELETE'}); Toast.ok('削除しました'); closeDetail(); await load(); }catch{}
+                        try{ await fetchJSON(URL_CONFIG.ADMIN_ITEM_DETAIL(item.id),{method:'DELETE'}); Toast.ok('削除しました'); closeDetail(); await refreshAll(); }catch{}
                     };
                     renderDetailImages(item.images||[]);
                     
-                    // QRコード(Google Charts API)
                     getElement('btnQRPNG').onclick=async ()=>{
                         try {
                             const res = await fetchJSON(`/items/${item.id}/qrcode.png`);
                             if (res.qr_url) { window.open(res.qr_url, '_blank', 'noopener'); }
                         } catch (e) { Toast.error(e.message); }
                     };
-                } catch (e) { Toast.error(`詳細情報の取得に失敗: ${e.message}`); closeDetail(); }
+                } catch (e) { Toast.error(`詳細表示に失敗: ${e.message}`); closeDetail(); }
             }
             function closeDetail(){ DOM.detailDrawer.classList.remove('open'); DOM.detailBackdrop.style.display='none'; }
             function renderDetailImages(list){
@@ -765,29 +784,35 @@
         })();
 
         const Loans = (()=>{
-            async function load(){
-                const activeOnly=DOM.activeOnly.checked; const q=DOM.loanQ.value.trim();
-                const url=`${URL_CONFIG.LOANS}?active_only=${activeOnly}${q?`&q=${encodeURIComponent(q)}`:''}`;
-                try {
-                    const rows=await fetchJSON(url);
-                    const tb=DOM.loansTable.querySelector('tbody'); tb.innerHTML='';
-                    (rows||[]).forEach(r=>{
-                        const tr=document.createElement('tr');
-                        tr.innerHTML=`
-                            <td>${escapeHtml(r.item_name)}</td><td>${r.qty}</td><td>${escapeHtml(r.borrower || '')}</td>
-                            <td>${fmtDate(r.loaned_at)}</td><td>${fmtDate(r.due_at)||'-'}</td><td>${fmtDate(r.returned_at)||'-'}</td>
-                            <td>${escapeHtml(r.purpose||'')}</td><td><button class="btn" data-act="detail">詳細</button></td>`;
-                        tr.querySelector('[data-act="detail"]').onclick=()=>openDetail(r.id);
-                        tb.appendChild(tr);
-                    });
-                } catch (e) { Toast.error(`貸出ロード失敗: ${e.message}`); }
+            // ★通信廃止
+            function load(){
+                const activeOnly=DOM.activeOnly.checked; const q=DOM.loanQ.value.trim().toLowerCase();
+                let filtered = Store.loans;
+                if(activeOnly) filtered = filtered.filter(l => !l.returned_at);
+                if(q) {
+                    filtered = filtered.filter(l => 
+                        (l.item_name||'').toLowerCase().includes(q) ||
+                        (l.borrower||'').toLowerCase().includes(q) ||
+                        (l.item_code||'').toLowerCase().includes(q) ||
+                        (l.purpose||'').toLowerCase().includes(q)
+                    );
+                }
+
+                const tb=DOM.loansTable.querySelector('tbody'); tb.innerHTML='';
+                filtered.forEach(r=>{
+                    const tr=document.createElement('tr');
+                    tr.innerHTML=`
+                        <td>${escapeHtml(r.item_name)}</td><td>${r.qty}</td><td>${escapeHtml(r.borrower || '')}</td>
+                        <td>${fmtDate(r.loaned_at)}</td><td>${fmtDate(r.due_at)||'-'}</td><td>${fmtDate(r.returned_at)||'-'}</td>
+                        <td>${escapeHtml(r.purpose||'')}</td><td><button class="btn" data-act="detail">詳細</button></td>`;
+                    tr.querySelector('[data-act="detail"]').onclick=()=>openDetail(r.id);
+                    tb.appendChild(tr);
+                });
             }
+            
             async function openDetail(id){
-                let d=null;
-                try{
-                    const list=await fetchJSON(`${URL_CONFIG.LOANS}?active_only=false`); d=(list||[]).find(x=>String(x.id)===String(id))||{};
-                }catch{}
-                if(!d?.id){ Toast.error('貸出情報が見つかりません'); return; }
+                const d = Store.loans.find(x=>String(x.id)===String(id));
+                if(!d){ Toast.error('貸出情報が見つかりません'); return; }
                 DOM.detailBackdrop.style.display='block'; DOM.loanDetailDrawer.classList.add('open');
                 getElement('ld_title').textContent=d.item_name || '(品名不明)';
                 const rows=[
@@ -802,11 +827,16 @@
                 btn.textContent=d.returned_at?'返却済み':'返却';
                 btn.onclick=async ()=>{
                     if(d.returned_at) return;
-                    try { await fetchJSON(URL_CONFIG.LOAN_RETURN,{method:'POST',body:JSON.stringify({loan_id:id})}); Toast.ok('返却しました'); closeDetail(); await load(); await Inventory.load();
+                    try { 
+                        await fetchJSON(URL_CONFIG.LOAN_RETURN,{method:'POST',body:JSON.stringify({loan_id:id})}); 
+                        Toast.ok('返却しました'); 
+                        closeDetail(); 
+                        await refreshAll(); // ★同期
                     } catch (e) { Toast.error(`返却処理失敗: ${e.message}`); }
                 };
             }
             function closeDetail(){ DOM.loanDetailDrawer.classList.remove('open'); DOM.detailBackdrop.style.display='none'; }
+            
             async function create(){
                 const btn=DOM.btnCreateLoan; btn.disabled=true;
                 try{
@@ -823,8 +853,9 @@
                         days = diff;
                     }
                     if(!item_code){ Toast.info('コードは必須です'); return; }
-                    await fetchJSON(URL_CONFIG.LOANS,{method:'POST',body:JSON.stringify({item_code, qty, days})}); // student_id はGAS側で実装が必要かも
-                    Toast.ok('貸出登録しました'); await load(); await Inventory.load();
+                    await fetchJSON(URL_CONFIG.LOANS,{method:'POST',body:JSON.stringify({item_code, qty, days})});
+                    Toast.ok('貸出登録しました'); 
+                    await refreshAll(); // ★同期
                 } catch (e) { Toast.error(`貸出登録失敗: ${e.message}`); }
                 finally { btn.disabled=false; }
             }
@@ -859,19 +890,17 @@
             }
 
             async function findAndOpenByCode(code) {
-                Toast.info(`コード「${code}」を検索中...`);
-                try {
-                    const results = await fetchJSON(`${URL_CONFIG.INVENTORY}?q=${encodeURIComponent(code)}`);
-                    if (results && results.length === 1) {
-                        Inventory.openDetail(results[0].id);
-                    } else if (results && results.length > 1) {
-                        Toast.info(`複数件ヒットしました。一覧を確認してください。`);
-                        DOM.q.value = code;
-                        Inventory.load();
-                    } else {
-                        Toast.error(`コードに一致する備品が見つかりません。`);
-                    }
-                } catch(e) { Toast.error(`検索に失敗しました: ${e.message}`); }
+                // ★通信廃止：ローカルから検索
+                const results = Store.items.filter(i => String(i.code) === code || String(i.id) === code || (i.product_name||'').includes(code));
+                if (results.length === 1) {
+                    Inventory.openDetail(results[0].id);
+                } else if (results.length > 1) {
+                    Toast.info(`複数件ヒットしました。一覧を確認してください。`);
+                    DOM.q.value = code;
+                    Inventory.load();
+                } else {
+                    Toast.error(`コードに一致する備品が見つかりません。`);
+                }
             }
 
             function handleCode(data) {
@@ -909,43 +938,37 @@
         })();
 
         const Users = (()=>{
-            async function load(){
-                try {
-                    const rows = await fetchJSON(URL_CONFIG.ADMIN_USERS);
-                    const tb=getElement('users').querySelector('tbody'); tb.innerHTML='';
-                    (rows||[]).forEach(r=>{
-                        const tr=document.createElement('tr');
-                        tr.innerHTML = `
-                            <td>${r.id}</td><td>${escapeHtml(r.email||'')}</td><td>${escapeHtml(r.student_id||'')}</td>
-                            <td>${escapeHtml((r.last_name||'')+' '+(r.first_name||''))}</td><td>${escapeHtml(r.grade || '')}</td>
-                            <td>${fmtDate(r.created_at)}</td><td>${fmtDate(r.last_login_at)}</td>
-                            <td><button class="btn" onclick="Users.openDetail('${r.id}')">詳細</button><button class="btn btn--danger" onclick="Users.delete('${r.id}')" ${r.is_admin?'disabled':''}>削除</button></td>`;
-                        tb.appendChild(tr);
-                    });
-                } catch (e) { Toast.error(`ユーザロード失敗: ${e.message}`); }
+            // ★通信廃止
+            function load(){
+                const tb=getElement('users').querySelector('tbody'); tb.innerHTML='';
+                Store.users.forEach(r=>{
+                    const tr=document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${r.id}</td><td>${escapeHtml(r.email||'')}</td><td>${escapeHtml(r.student_id||'')}</td>
+                        <td>${escapeHtml((r.last_name||'')+' '+(r.first_name||''))}</td><td>${escapeHtml(r.grade || '')}</td>
+                        <td>${fmtDate(r.created_at)}</td><td>${fmtDate(r.last_login_at)}</td>
+                        <td><button class="btn" onclick="Users.openDetail('${r.id}')">詳細</button><button class="btn btn--danger" onclick="Users.delete('${r.id}')" ${r.is_admin?'disabled':''}>削除</button></td>`;
+                    tb.appendChild(tr);
+                });
             }
             async function del(id){
                 const ok=await Confirm.show(`ユーザID ${id} を削除します．よろしいですか？`); if(!ok) return;
-                try { await fetchJSON(URL_CONFIG.ADMIN_USER_DETAIL(id), { method:'DELETE' }); Toast.ok('削除しました'); load(); } catch (e) { Toast.error(`削除失敗: ${e.message}`); }
+                try { await fetchJSON(URL_CONFIG.ADMIN_USER_DETAIL(id), { method:'DELETE' }); Toast.ok('削除しました'); await refreshAll(); } catch (e) { Toast.error(`削除失敗: ${e.message}`); }
             }
-            async function openDetail(id){
-                try {
-                    // GASバックエンドに対応するため、全ユーザーリストから検索する簡易実装
-                    const list = await fetchJSON(URL_CONFIG.ADMIN_USERS);
-                    const d = list.find(x => String(x.id) === String(id));
-                    if (!d) throw new Error('User not found');
-                    
-                    DOM.userDetailCard.style.display='block';
-                    DOM.ud_id.value=d.id; DOM.ud_email.value=d.email||''; DOM.ud_student.value=d.student_id||'';
-                    DOM.ud_ln.value=d.last_name||''; DOM.ud_fn.value=d.first_name||''; DOM.ud_grade.value=d.grade||'';
-                    DOM.ud_info.textContent = `ログイン： 一般=${d.password_hash ?'○':'―'} ／ 管理=${d.is_admin ?'○':'―'}`;
-                    DOM.ud_email.focus();
-                } catch (e) { Toast.error(`ユーザ詳細取得失敗: ${e.message}`); }
+            function openDetail(id){
+                const d = Store.users.find(x => String(x.id) === String(id));
+                if (!d) return Toast.error('User not found');
+                
+                DOM.userDetailCard.style.display='block';
+                DOM.ud_id.value=d.id; DOM.ud_email.value=d.email||''; DOM.ud_student.value=d.student_id||'';
+                DOM.ud_ln.value=d.last_name||''; DOM.ud_fn.value=d.first_name||''; DOM.ud_grade.value=d.grade||'';
+                DOM.ud_info.textContent = `ログイン： 一般=${d.password_hash ?'○':'―'} ／ 管理=${d.is_admin ?'○':'―'}`;
+                DOM.ud_email.focus();
             }
             async function saveDetail(){
                 const id=DOM.ud_id.value;
                 const json = { email:(DOM.ud_email.value||'').trim()||null, student_id:(DOM.ud_student.value||'').trim()||null, last_name:DOM.ud_ln.value, first_name:DOM.ud_fn.value, grade:DOM.ud_grade.value||null };
-                try { await fetchJSON(URL_CONFIG.ADMIN_USER_DETAIL(id), { method:'PATCH', body: JSON.stringify(json) }); Toast.ok('保存しました'); await load(); await openDetail(id); } catch (e) { Toast.error(`保存失敗: ${e.message}`); }
+                try { await fetchJSON(URL_CONFIG.ADMIN_USER_DETAIL(id), { method:'PATCH', body: JSON.stringify(json) }); Toast.ok('保存しました'); await refreshAll(); openDetail(id); } catch (e) { Toast.error(`保存失敗: ${e.message}`); }
             }
             async function setPassword(){
                 const id=DOM.ud_id.value; const role=DOM.pw_role.value; const pw=DOM.pw_new.value;
@@ -953,7 +976,7 @@
                 const ok=await Confirm.show(`ユーザID ${id} の ${role} 用パスワードを更新します．よろしいですか？`); if(!ok) return;
                 try {
                     await fetchJSON(`${URL_CONFIG.ADMIN_USER_DETAIL(id)}/password`, { method:'POST', body: JSON.stringify({role: role, new_password: pw}) });
-                    Toast.ok('パスワードを更新しました'); DOM.pw_new.value=''; await openDetail(id);
+                    Toast.ok('パスワードを更新しました'); DOM.pw_new.value=''; await refreshAll(); openDetail(id);
                 } catch (e) { Toast.error(`パスワード更新失敗: ${e.message}`); }
             }
             async function promote(){
@@ -962,7 +985,7 @@
                 const ok=await Confirm.show(`ユーザ ${email} に管理者権限を付与します．よろしいですか？`); if(!ok) return;
                 try {
                     await fetchJSON('/admin/users/promote', { method:'POST', body: JSON.stringify({email: email, password: admin_password}) });
-                    Toast.ok('管理者資格を付与しました'); DOM.promEmail.value=''; DOM.promPass.value=''; load();
+                    Toast.ok('管理者資格を付与しました'); DOM.promEmail.value=''; DOM.promPass.value=''; await refreshAll();
                 } catch (e) { Toast.error(`管理者昇格失敗: ${e.message}`); }
             }
             window.Users = { load, delete:del, openDetail, saveDetail, setPassword, promote };
@@ -980,7 +1003,7 @@
             }
             function fetchAndSetNextId(){
                 Toast.info("自動採番は仮採番機能です。");
-                DOM.reg_sid.value = "AUTO-" + Math.floor(Math.random() * 10000); // 簡易モック
+                DOM.reg_sid.value = "AUTO-" + Math.floor(Math.random() * 10000);
             }
             function clear(){
                 getElement('reg_email').value=''; getElement('reg_ln').value=''; getElement('reg_fn').value=''; getElement('reg_grade').value='';
@@ -995,7 +1018,7 @@
                 try {
                     const created=await fetchJSON('/admin/users/register', {method:'POST', body:JSON.stringify(jsonBody)});
                     Toast.ok(`ユーザを作成しました（ID=${created.id||'?'}）．初期PWは ${created.initial_password||passUser} です．`);
-                    await Users.load(); clear(); Router.show('Users');
+                    await refreshAll(); clear(); Router.show('Users');
                 } catch (e) { Toast.error(`ユーザ登録失敗: ${e.message}`); }
             }
             onRoleChange();
@@ -1003,25 +1026,32 @@
         })();
 
         const Audit = (()=>{
-            async function load(){
-                const q=getElement('auditQ').value.trim();
-                try {
-                    const rows=await fetchJSON(`${URL_CONFIG.ADMIN_AUDIT}${q?`?q=${encodeURIComponent(q)}`:''}`);
-                    const tb=getElement('auditTbl').querySelector('tbody'); tb.innerHTML='';
-                    (rows||[]).forEach(r=>{
-                        const tr=document.createElement('tr');
-                        tr.innerHTML=`
-                            <td>${r.id}</td><td>${fmtDate(r.created_at)}</td><td>${r.action}</td>
-                            <td>${r.entity}</td><td>${r.entity_id||'-'}</td><td>${r.actor||'-'}</td>
-                            <td class="muted">${escapeHtml(r.meta||'')}</td>`;
-                        tb.appendChild(tr);
-                    });
-                } catch (e) { Toast.error(`監査ログロード失敗: ${e.message}`); }
+            // ★通信廃止
+            function load(){
+                const q=getElement('auditQ').value.trim().toLowerCase();
+                let filtered = Store.audit;
+                if(q){
+                    filtered = filtered.filter(r => 
+                        (r.action||'').toLowerCase().includes(q) ||
+                        (r.entity||'').toLowerCase().includes(q) ||
+                        (r.actor||'').toLowerCase().includes(q) ||
+                        (r.meta||'').toLowerCase().includes(q)
+                    );
+                }
+                const tb=getElement('auditTbl').querySelector('tbody'); tb.innerHTML='';
+                filtered.forEach(r=>{
+                    const tr=document.createElement('tr');
+                    tr.innerHTML=`
+                        <td>${r.id}</td><td>${fmtDate(r.created_at)}</td><td>${r.action}</td>
+                        <td>${r.entity}</td><td>${r.entity_id||'-'}</td><td>${r.actor||'-'}</td>
+                        <td class="muted">${escapeHtml(r.meta||'')}</td>`;
+                    tb.appendChild(tr);
+                });
             }
             return { load };
         })();
 
-        document.addEventListener('DOMContentLoaded', ()=>{
+        document.addEventListener('DOMContentLoaded', async ()=>{
             getElement('tabInventory').onclick = ()=>Router.show('Inventory');
             getElement('tabLoans').onclick = ()=>Router.show('Loans');
             getElement('tabUsers').onclick = ()=>Router.show('Users');
@@ -1043,7 +1073,7 @@
             onEnter('loanQ', Loans.load);
             DOM.activeOnly.addEventListener('change', Loans.load);
             DOM.loanQ.addEventListener('input', debounce(Loans.load, 300));
-            getElement('btnReloadUsers').onclick = Users.load;
+            getElement('btnReloadUsers').onclick = refreshAll; // 更新ボタンで再同期
             getElement('btnUserSave').onclick = Users.saveDetail;
             getElement('btnSetPassword').onclick = Users.setPassword;
             getElement('btnPromote').onclick = Users.promote;
@@ -1064,6 +1094,8 @@
                 DOM.loginSec.style.display = 'none';
                 DOM.btnLogout.style.display = 'inline-block';
                 DOM.tabs.style.display = 'flex';
+                
+                await refreshAll(); // ★初期表示時に全データを同期
                 Router.restore();
             } else {
                 DOM.loginSec.style.display = 'block';

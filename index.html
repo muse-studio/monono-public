@@ -239,10 +239,12 @@
   // ==========================================
   const GAS_URL = "https://script.google.com/macros/s/AKfycbykCzvGmlV5CRPrZwGREiLnT_PasBLsyXCQtTaWJu0zCUePpezN4QYaSVBUh1LNf-5nLw/exec"; 
 
-  const App = (() => {
+const App = (() => {
     let token = null;
+    // ★追加：ローカルにデータを保持する「ストア」
+    let store = { items: [], categories: [], loans: [], timestamp: 0 };
 
-    // GAS用 fetch コアロジック (CORS・メソッドエミュレート対応)
+    // GAS用 fetch コアロジック (変更なし)
     async function fetchJSON(path, opt = {}) {
         const method = opt.method || 'GET';
         let url = GAS_URL;
@@ -308,9 +310,7 @@
 
           afterLoginUI();
           await refreshAll();
-      } catch(e) {
-          // エラーは fetchJSON 内で alert されるため，ここでは握りつぶす
-      }
+      } catch(e) {}
     }
 
     async function changePassword(event){
@@ -322,7 +322,6 @@
       try {
           await fetchJSON('/me/password', { method:'POST', body: JSON.stringify({old_password, new_password}) });
           alert('パスワードを変更しました．続行します．');
-
           document.getElementById('pwChangeSec').style.display='none';
           afterLoginUI();
           await refreshAll();
@@ -340,16 +339,35 @@
 
     function logout(){ token=null; location.reload(); }
 
+    // ★大改修：一括でデータを取得し、ローカルに保存する
     async function refreshAll(){
-      await Promise.allSettled([ Inventory.init(), Active.load(), History.load() ]);
+      try {
+        document.body.style.cursor = 'wait'; // マウスをくるくるにする
+        const data = await fetchJSON('/sync');
+        store.items = data.items || [];
+        store.categories = data.categories || [];
+        store.loans = data.loans || [];
+        store.timestamp = data.timestamp || Date.now();
+        document.body.style.cursor = 'default';
+
+        // 取得したローカルデータを使って画面を描画
+        Inventory.init();
+        Active.load();
+        History.load();
+      } catch (e) {
+        document.body.style.cursor = 'default';
+        console.error(e);
+      }
     }
+
     function jumpBorrow(code,name){
       document.getElementById('loanCode').value = code || '';
       document.getElementById('loanName').value = name || '';
       Router.show('Borrow');
     }
 
-    return { fetchJSON, login, logout, refreshAll, changePassword, jumpBorrow, esc };
+    // ★ store を外部から触れるようにエクスポート
+    return { fetchJSON, login, logout, refreshAll, changePassword, jumpBorrow, esc, store };
   })();
 
   const Router = (() => {
@@ -370,6 +388,7 @@
   const Loans = (() => {
     function ymdToLocalDate(ymd){ if(!ymd) return null; const [y,m,d]=ymd.split('-').map(n=>parseInt(n,10)); return new Date(y,(m||1)-1,(d||1),0,0,0,0); }
     function ceilDaysDiff(fromDate,toDate){ return Math.ceil((toDate-fromDate)/(1000*60*60*24)); }
+    
     async function borrow(){
       const btn=document.getElementById('btnBorrow'); btn.disabled=true;
       try{
@@ -387,36 +406,44 @@
           if(diff<1){ alert('返却期限は本日以降の日付を指定してください'); return; }
           days=diff;
         }
+        
+        // 貸出処理（通信あり）
         await App.fetchJSON('/loans/me',{method:'POST',body:JSON.stringify({item_code,qty,days,purpose})});
-        alert('貸出登録しました'); await Active.load(); await Inventory.load(); Router.show('Active');
+        alert('貸出登録しました'); 
+        
+        // ★ 成功したらバックグラウンドで最新データを同期し直す
+        await App.refreshAll();
+        Router.show('Active');
       } catch(e) {} finally { btn.disabled=false; }
     }
     return { borrow };
   })();
 
   const Active = (() => {
-    async function load(){
-      try {
-          const rows = await App.fetchJSON('/me/loans?active_only=true');
-          const tb=document.querySelector('#tblActive tbody'); tb.innerHTML='';
-          rows.forEach(r=>{
-            const tr=document.createElement('tr');
-            const code = r.item_code || '';
-            const name = App.esc(r.item_name||'');
-            tr.innerHTML = `
-              <td><a class="inline" onclick="Inventory.openDetail('${r.item_id}','${(code).replace(/'/g,"&#39;")}')">${name}</a></td>
-              <td>${r.qty}</td>
-              <td>${fmt(r.loaned_at)}</td>
-              <td>${fmt(r.due_at)||'-'}</td>
-              <td><button class="btn" onclick="Active.returnLoan('${r.id}')">返却</button></td>`;
-            tb.appendChild(tr);
-          });
-      } catch(e) {}
+    function load(){
+      // ★ API通信を廃止！ App.store のローカルデータからフィルタリングするだけ
+      const rows = App.store.loans.filter(l => !l.returned_at);
+      const tb=document.querySelector('#tblActive tbody'); tb.innerHTML='';
+      rows.forEach(r=>{
+        const tr=document.createElement('tr');
+        const code = r.item_code || '';
+        const name = App.esc(r.item_name||'');
+        tr.innerHTML = `
+          <td><a class="inline" onclick="Inventory.openDetail('${r.item_id}','${(code).replace(/'/g,"&#39;")}')">${name}</a></td>
+          <td>${r.qty}</td>
+          <td>${fmt(r.loaned_at)}</td>
+          <td>${fmt(r.due_at)||'-'}</td>
+          <td><button class="btn" onclick="Active.returnLoan('${r.id}')">返却</button></td>`;
+        tb.appendChild(tr);
+      });
     }
     async function returnLoan(id){
       try {
+          // 返却処理（通信あり）
           await App.fetchJSON('/loans/return',{method:'POST',body:JSON.stringify({loan_id:id})});
-          alert('返却しました'); load();
+          alert('返却しました'); 
+          // ★ 成功したら最新データを同期し直す
+          await App.refreshAll();
       } catch (e) {}
     }
     function fmt(s){ if(!s) return ""; try{ return new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(s)); }catch{ return new Date(s).toLocaleString('ja-JP'); } }
@@ -424,23 +451,22 @@
   })();
 
   const History = (() => {
-    async function load(){
-      try {
-          const rows = await App.fetchJSON('/me/loans?active_only=false');
-          const tb=document.querySelector('#tblHist tbody'); tb.innerHTML='';
-          rows.filter(r=>r.returned_at).forEach(r=>{
-            const tr=document.createElement('tr');
-            const code = r.item_code || '';
-            const name = App.esc(r.item_name||'');
-            tr.innerHTML = `
-              <td><a class="inline" onclick="Inventory.openDetail('${r.item_id}','${(code).replace(/'/g,"&#39;")}')">${name}</a></td>
-              <td>${r.qty}</td>
-              <td>${fmt(r.loaned_at)}</td>
-              <td>${fmt(r.due_at)||'-'}</td>
-              <td>${fmt(r.returned_at)}</td>`;
-            tb.appendChild(tr);
-          });
-      } catch(e){}
+    function load(){
+      // ★ API通信を廃止！ App.store のローカルデータからフィルタリングするだけ
+      const rows = App.store.loans.filter(l => l.returned_at);
+      const tb=document.querySelector('#tblHist tbody'); tb.innerHTML='';
+      rows.forEach(r=>{
+        const tr=document.createElement('tr');
+        const code = r.item_code || '';
+        const name = App.esc(r.item_name||'');
+        tr.innerHTML = `
+          <td><a class="inline" onclick="Inventory.openDetail('${r.item_id}','${(code).replace(/'/g,"&#39;")}')">${name}</a></td>
+          <td>${r.qty}</td>
+          <td>${fmt(r.loaned_at)}</td>
+          <td>${fmt(r.due_at)||'-'}</td>
+          <td>${fmt(r.returned_at)}</td>`;
+        tb.appendChild(tr);
+      });
     }
     function fmt(s){ if(!s) return ""; try{ return new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Tokyo'}).format(new Date(s)); }catch{ return new Date(s).toLocaleString('ja-JP'); } }
     return { load };
@@ -450,23 +476,23 @@
     let state = { skip: 0, limit: 20, total: 0, categoryId: null };
     function boolMark(v){ return (v===true || v==='true')?'<span class="muted" style="color:#065f46">○</span>':'<span class="muted">―</span>'; }
 
-    async function init(){
-      try {
-          const cats = await App.fetchJSON('/categories');
-          const container = document.getElementById('categoryTabs');
-          let tabsHtml = `<button class="btn pri" data-id="all" onclick="Inventory.changeCategory(null)">すべて</button>`;
-          tabsHtml += (cats||[]).map(c => `<button class="btn" data-id="${c.id}" onclick="Inventory.changeCategory('${c.id}')">${App.esc(c.name)}</button>`).join('');
-          container.innerHTML = tabsHtml;
-      } catch(e) {}
+    function init(){
+      // ★ API通信を廃止！ App.store のローカルデータを使用
+      const cats = App.store.categories;
+      const container = document.getElementById('categoryTabs');
+      let tabsHtml = `<button class="btn pri" data-id="all" onclick="Inventory.changeCategory(null)">すべて</button>`;
+      tabsHtml += (cats||[]).map(c => `<button class="btn" data-id="${c.id}" onclick="Inventory.changeCategory('${c.id}')">${App.esc(c.name)}</button>`).join('');
+      container.innerHTML = tabsHtml;
 
       const qEl=document.getElementById('q'); let t=null;
       qEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter') load(true); });
+      // タイピングが終わってから0.3秒後に自動検索
       qEl.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(()=>load(true),300); });
 
       const due=document.getElementById('loanDue'); const d=new Date(); const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
       if(due) due.min = `${y}-${m}-${dd}`;
 
-      await load(true);
+      load(true);
     }
 
     function changeCategory(catId){
@@ -477,38 +503,50 @@
       load(true);
     }
 
-    async function load(reset=false){
+    function load(reset=false){
       if (reset) state.skip = 0;
-      const q = document.getElementById('q').value.trim();
-      let url = `/inventory?skip=${state.skip}&limit=${state.limit}`;
-      if (q) url += `&q=${encodeURIComponent(q)}`;
-      if (state.categoryId) url += `&category_id=${state.categoryId}`;
+      const q = document.getElementById('q').value.trim().toLowerCase();
 
-      try {
-          const data = await App.fetchJSON(url);
-          const items = data.items || data || [];
-          state.total = data.total ?? items.length;
+      // ★ API通信を廃止！ ローカルの配列をJavascriptで直接絞り込む（爆速）
+      let filtered = App.store.items;
+      
+      // カテゴリ絞り込み
+      if (state.categoryId) {
+        filtered = filtered.filter(i => String(i.category_id) === String(state.categoryId));
+      }
+      // キーワード絞り込み
+      if (q) {
+        filtered = filtered.filter(i => 
+          (i.product_name || '').toLowerCase().includes(q) ||
+          (i.manufacturer || '').toLowerCase().includes(q) ||
+          (i.code || '').toLowerCase().includes(q)
+        );
+      }
 
-          const tb=document.querySelector('#items tbody'); tb.innerHTML='';
-          items.forEach(r=>{
-            const name = App.esc(r.product_name||'');
-            const code = (r.code||'').replace(/'/g,"&#39;");
-            const thumb = (r.images && r.images[0]) ? `<img class="thumb" src="${r.images[0]}" alt="thumb">` : `<div class="thumb">—</div>`;
-            const cat = App.esc(r.category_name || '-');
-            const id = (r.id!=null)?r.id:'null';
-            const available = boolMark(r.available);
-            const tr=document.createElement('tr');
-            tr.innerHTML = `
-              <td>${thumb}</td>
-              <td><a class="inline" onclick="Inventory.prefill('${code}','${name}')">${name}</a></td>
-              <td>${cat}</td>
-              <td>${r.stock ?? '-'}</td>
-              <td>${available}</td>
-              <td><button class="btn" onclick="Inventory.openDetail('${id}', '${code}')">詳細</button></td>`;
-            tb.appendChild(tr);
-          });
-          updatePagination();
-      } catch (e) {}
+      state.total = filtered.length;
+      
+      // ページネーション用に切り取る
+      const paginated = filtered.slice(state.skip, state.skip + state.limit);
+
+      const tb=document.querySelector('#items tbody'); tb.innerHTML='';
+      paginated.forEach(r=>{
+        const name = App.esc(r.product_name||'');
+        const code = (r.code||'').replace(/'/g,"&#39;");
+        const thumb = (r.images && r.images[0]) ? `<img class="thumb" src="${r.images[0]}" alt="thumb">` : `<div class="thumb">—</div>`;
+        const cat = App.esc(r.category_name || '-');
+        const id = (r.id!=null)?r.id:'null';
+        const available = boolMark(r.available);
+        const tr=document.createElement('tr');
+        tr.innerHTML = `
+          <td>${thumb}</td>
+          <td><a class="inline" onclick="Inventory.prefill('${code}','${name}')">${name}</a></td>
+          <td>${cat}</td>
+          <td>${r.stock ?? '-'}</td>
+          <td>${available}</td>
+          <td><button class="btn" onclick="Inventory.openDetail('${id}', '${code}')">詳細</button></td>`;
+        tb.appendChild(tr);
+      });
+      updatePagination();
     }
 
     function updatePagination(){
@@ -537,24 +575,17 @@
       document.getElementById('d_kv').innerHTML = '';
       document.getElementById('d_borrowers').innerHTML = '';
 
-      let item=null;
-      try{
-        if(id!=null && id !== 'null'){
-          item = await App.fetchJSON(`/items/${id}`);
-        } else if (code) {
-          const searchData = await App.fetchJSON(`/inventory?q=${encodeURIComponent(code)}`);
-          const results = searchData.items || searchData;
-          if (Array.isArray(results) && results.length === 1) {
-            item = await App.fetchJSON(`/items/${results[0].id}`);
-          } else {
-            throw new Error(results.length > 1 ? '複数の備品がヒットしました。' : '該当する備品が見つかりません。');
-          }
-        }
-        if (!item) throw new Error('備品情報を取得できませんでした。');
-      }catch(e){
-        document.getElementById('d_media').innerHTML = `<span class="muted">読み込みに失敗しました</span>`;
-        document.getElementById('d_title').textContent = '(読み込み失敗)';
-        document.getElementById('d_borrowers').textContent = e.message || 'エラーが発生しました。';
+      // ★ アイテムの基本情報は通信せずにローカルから取得
+      let item = null;
+      if (id != null && id !== 'null') {
+        item = App.store.items.find(i => String(i.id) === String(id));
+      } else if (code) {
+        item = App.store.items.find(i => String(i.code) === String(code));
+      }
+
+      if (!item) {
+        document.getElementById('d_media').innerHTML = `<span class="muted">備品が見つかりません</span>`;
+        document.getElementById('d_title').textContent = '(エラー)';
         return;
       }
 
@@ -587,6 +618,7 @@
 
       const borrowersBox=document.getElementById('d_borrowers');
       try{
+        // ★ 詳細画面の「現在借りている人」だけは、最新状況を知るために通信する
         const loans = await App.fetchJSON(`/items/${item.id}/borrowers`);
         if(Array.isArray(loans) && loans.length){
           const names = Array.from(new Set(loans.map(lo => (lo.user_name || '不明'))));

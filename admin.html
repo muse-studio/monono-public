@@ -515,6 +515,7 @@
             const tables = Array.isArray(targetTables) ? targetTables : null;
             try {
                 const query = tables ? `?tables=${tables.join(',')}` : '';
+                const data = await fetchJSON('/sync' + query);
                 
                 if (data.items) { Store.items = data.items; Store.ts.Items = data.ts_Items; }
                 if (data.categories) { Store.categories = data.categories; Store.ts.Categories = data.ts_Categories; }

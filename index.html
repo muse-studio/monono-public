@@ -93,7 +93,7 @@
           <label for="loginPass">パスワード</label>
           <input id="loginPass" type="password" autocomplete="current-password" required style="min-width:240px" placeholder="●●●●●●●●">
         </div>
-        <div><button class="btn pri" type="submit">ログイン</button></div>
+        <div><button id="btnLogin" class="btn pri" type="submit">ログイン</button></div>
       </form>
       <div class="muted" style="margin-top:8px">※新規登録は管理者が実施します．配布された仮パスワードでログインし，初回は必ず変更してください．</div>
       <div class="muted" style="margin-top:4px">
@@ -296,6 +296,8 @@ const App = (() => {
       event?.preventDefault?.();
       const username=document.getElementById('loginEmail').value.trim();
       const password=document.getElementById('loginPass').value;
+      const btn = document.getElementById('btnLogin');
+      if (btn) btn.disabled = true;
 
       try {
           const j = await fetchJSON('/token', { method: 'POST', body: JSON.stringify({username, password}) });
@@ -313,7 +315,7 @@ const App = (() => {
 
           afterLoginUI();
           await init(); // refreshAll ではなく init で差分同期
-      } catch(e) { console.error(e); }
+      } catch(e) { console.error(e); } finally { if (btn) btn.disabled = false; }
     }
 
     async function changePassword(event){

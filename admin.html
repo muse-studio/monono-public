@@ -465,7 +465,7 @@
             const method = opt.method || 'GET';
             let url = GAS_URL;
             let init = { ...opt };
-            const token = localStorage.getItem('lab_server_admin_token') || State.token;
+            const token = localStorage.getItem('monono_token') || State.token;
             
             if (method === 'GET') {
                 url += `?path=${encodeURIComponent(path.split('?')[0])}`;
@@ -608,7 +608,7 @@
             try{
                 const r = await fetchJSON(URL_CONFIG.ADMIN_TOKEN, { method:'POST', body: JSON.stringify({username, password}) });
                 State.token = r.access_token;
-                localStorage.setItem('lab_server_admin_token', State.token);
+                localStorage.setItem('monono_token', State.token);
                 DOM.loginSec.style.display='none';
                 DOM.btnLogout.style.display='inline-block';
                 DOM.tabs.style.display='flex';
@@ -618,7 +618,7 @@
                 Toast.ok('ログインしました');
             } finally { btn.disabled=false; }
         }
-        function logout(){ State.token=null; localStorage.removeItem('lab_server_admin_token'); location.reload(); }
+        function logout(){ State.token=null; localStorage.removeItem('monono_token'); location.reload(); }
 
         const Inventory = (()=>{
             let activeCategories=new Set(); let knownCategories=[];
@@ -1102,12 +1102,9 @@
             const today = new Date().toISOString().split('T')[0];
             if (DOM.loanDueDate) DOM.loanDueDate.min = today;
             
-            const token = localStorage.getItem('lab_server_admin_token');
+            const token = localStorage.getItem('monono_token');
             if (token && token.length > 20) {
                 State.token = token;
-                DOM.loginSec.style.display = 'none';
-                DOM.btnLogout.style.display = 'inline-block';
-                DOM.tabs.style.display = 'flex';
                 
                 // 1. 公共キャッシュと管理者キャッシュの復元
                 const common = JSON.parse(localStorage.getItem('monono_common') || '{}');
@@ -1124,13 +1121,34 @@
                 Store.ts.Users = adminCache.ts?.Users || 0;
                 Store.ts.Audit = adminCache.ts?.Audit || 0;
 
-                // 2. とりあえず表示
-                Router.restore();
+                // 2. とりあえず表示（キャッシュがあれば）
+                if (Store.items.length > 0) {
+                    DOM.loginSec.style.display = 'none';
+                    DOM.btnLogout.style.display = 'inline-block';
+                    DOM.tabs.style.display = 'flex';
+                    Router.restore();
+                }
 
-                // 3. バックグラウンドで差分同期 (非ブロッキング)
+                // 3. バックグラウンドで管理者権限の検証と同期を行う
                 (async () => {
                   try {
+                      // 1. まず本人情報を取得して管理者かチェック
+                      const me = await fetchJSON('/me');
+                      const isAdmin = (me.is_admin === true || me.is_admin === 'true');
+                      
+                      if (!isAdmin) {
+                          throw new Error("Admin only (forbidden)");
+                      }
+
+                      // 2. 権限があれば同期情報を取得
                       const status = await fetchJSON('/check_update');
+                      
+                      // ここまで来ればトークンは有効かつ管理者
+                      DOM.loginSec.style.display = 'none';
+                      DOM.btnLogout.style.display = 'inline-block';
+                      DOM.tabs.style.display = 'flex';
+                      if (Store.items.length === 0) Router.restore(); // キャッシュがなかった場合のみここで表示
+
                       const needed = [];
                       if ((status.Items || 0) > (Store.ts.Items || 0)) needed.push('Items');
                       if ((status.Categories || 0) > (Store.ts.Categories || 0)) needed.push('Categories');
@@ -1142,7 +1160,19 @@
                           console.log("Admin syncing tables:", needed);
                           await refreshAll(needed);
                       }
-                  } catch(e) { console.warn("Admin sync failed", e); }
+                  } catch(e) { 
+                      console.warn("Admin validation or sync failed", e);
+                      // トークンが無効、あるいは管理者権限がない場合は、ログイン情報をクリアしてログイン画面へ
+                      if (e.message.includes('401') || e.message.includes('403') || e.message.includes('token') || e.message.includes('Admin')) {
+                          State.token = null;
+                          // ※ 強制的に消すと不便な場合もあるが、Invalid tokenループを防ぐため
+                          // localStorage.removeItem('monono_token'); 
+                          DOM.loginSec.style.display = 'block';
+                          DOM.tabs.style.display = 'none';
+                          DOM.btnLogout.style.display = 'none';
+                          Toast.info("管理者セッションが無効です。再ログインしてください。");
+                      }
+                  }
                 })();
             } else {
                 DOM.loginSec.style.display = 'block';

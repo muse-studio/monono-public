@@ -35,7 +35,7 @@
     <div style="display:flex;gap:10px;align-items:center;justify-content:space-between">
       <div style="font-weight:700">新規登録</div>
       <div>
-        <a class="btn" id="linkBackToLogin" href="/portal.html">← ログインへ戻る</a>
+        <a class="btn" id="linkBackToLogin" href="/index.html">← ログインへ戻る</a>
       </div>
     </div>
   </header>
@@ -234,11 +234,11 @@
   </script>
 
   <script>
-  // 「ログインへ戻る」→ 常にオリジン直下 /portal.html へ
+  // 「ログインへ戻る」→ 常にオリジン直下 /index.html へ
   document.getElementById('linkBackToLogin')?.addEventListener('click', (ev) => {
     if (ev.button === 0 && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey) {
       ev.preventDefault();
-      location.href = new URL('/portal.html', location.origin).href;
+      location.href = new URL('/index.html', location.origin).href;
     }
   });
   </script>

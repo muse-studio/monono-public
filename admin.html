@@ -1,0 +1,1077 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8"/>
+    <title>Monono Admin Mode</title>
+    <link rel="icon" type="image/png" href="/static/monono_favicon.png">
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <style>
+        /* CSSは変更なし */
+        :root {
+            --gap: 18px; --bg: #f8fbf6; --card: #fff; --fg: #1f2937; --muted: #6b7280;
+            --border: #e5e7eb; --soft: #f8fafc; --accent: #8bc56c; --accent-dark: #6a9c51;
+            --accent-2: #d9edcf; --tab-active: #f1f8ee; --tab-inactive: #e1f0da;
+            --danger: #ef4444; --success-dark: #065f46;
+        }
+        * { box-sizing: border-box }
+        body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; color:var(--fg); background:var(--bg) }
+        .icon { display:inline-block; vertical-align:middle; margin-right:6px; font-size:1.2em }
+        .hidden { display:none !important }
+        .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
+        .wrap { max-width:1200px; margin:22px auto; padding:0 16px 28px }
+        .row { display:flex; gap:var(--gap); align-items:center; flex-wrap:wrap; margin-bottom:8px }
+        .grid { display:grid; grid-template-columns:1.1fr 1.2fr; gap:14px }
+        .right { display:flex; gap:8px; justify-content:flex-end }
+        @media (max-width:920px){ .grid{grid-template-columns:1fr} }
+        @media (max-width:720px){ .wrap{padding-bottom:70px} }
+        .app-header { position:sticky; top:0; z-index:10; background:linear-gradient(90deg,var(--accent-dark),var(--accent)); color:#fff; border-bottom:1px solid rgba(255,255,255,.25); padding:16px 20px; display:flex; align-items:center; justify-content:space-between; box-shadow:0 2px 8px rgba(0,0,0,0.08) }
+        .app-header__title { font-size:20px; font-weight:800; display:flex; align-items:center; gap:8px }
+        .app-header__nav { display:flex; gap:12px; align-items:center }
+        .btn { padding:10px 16px; border-radius:12px; border:1.5px solid var(--border); background:#fff; cursor:pointer; transition:filter .15s ease,transform .02s ease,background-color .15s ease; font-size:14px; font-weight:600 }
+        .btn:hover:not([disabled]){ background:var(--accent-2) }
+        .btn:active:not([disabled]){ transform:translateY(1px) }
+        .btn--primary { border-color:transparent; background:var(--accent); color:#fff }
+        .btn--primary:hover:not([disabled]){ background:var(--accent-dark) }
+        .btn--danger { border-color:transparent; background:var(--danger); color:#fff }
+        .btn[disabled]{ opacity:.6; cursor:not-allowed }
+        input,button,select,textarea { padding:10px; margin:6px 0; border-radius:12px; border:1.5px solid var(--border); background:#fff; font-size:14px; line-height: normal; }
+        input:focus,select:focus,textarea:focus { outline:2px solid var(--accent-2); border-color:var(--accent) }
+        textarea { width:100%; min-height:70px }
+        .login-form { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+        h2 { margin:24px 0 10px; font-size:20px; display:flex; align-items:center; gap:8px }
+        h3 { margin:12px 0 8px; font-size:16px }
+        .muted { color:var(--muted); font-size:12px }
+        .title { font-size:18px; font-weight:700; margin:0 0 6px }
+        .card { border:1.5px solid var(--border); padding:18px; border-radius:16px; margin:14px 0; background:var(--card); box-shadow:0 2px 8px rgba(0,0,0,0.03)}
+        .data-table { border-collapse:separate; border-spacing:0; width:100%; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 2px 6px rgba(0,0,0,0.03)}
+        .table-container { overflow:auto; max-height:60vh; border:1px solid var(--border); border-radius:12px; margin-top:8px }
+        .data-table th,.data-table td{ border-bottom:1.5px solid var(--border); padding:12px 14px; text-align:left; vertical-align:top; font-size:14px }
+        .data-table th{ background:var(--tab-inactive); position:sticky; top:0; z-index:1; color:var(--muted); font-size:12px; letter-spacing:.4px }
+        .data-table tbody tr:hover td{ background:var(--tab-active) }
+        @media (max-width:720px){ .data-table{display:block;overflow:auto} }
+        .pill { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid var(--border); font-size:12px }
+        .pill.ok { border-color:#bbf7d0; background:#ecfdf5; color:var(--success-dark) }
+        .pill.ng { background:var(--soft); color:#64748b }
+        .tabs-ui { display:flex; gap:10px; justify-content:center; margin:10px 0 0; flex-wrap:wrap }
+        .tab-btn { padding:10px 20px; border-radius:14px 14px 0 0; border:none; background:var(--tab-inactive); color:var(--fg); font-size:14px; font-weight:700; cursor:pointer }
+        .tab-btn.active { background:rgb(0,87,29); color:#fff }
+        .toast-container { position:fixed; right:12px; bottom:12px; display:flex; flex-direction:column; gap:8px; z-index:9999 }
+        .toast { background:#111827; color:#fff; padding:10px 12px; border-radius:10px; box-shadow:0 6px 20px rgba(0,0,0,.18); font-size:12px; min-width: 150px; }
+        .toast.error { background:#961d1d }
+        .toast.ok { background:var(--success-dark) }
+        .backdrop { position:fixed; inset:0; background:rgba(0,0,0,.25); display:none; z-index:1000 }
+        .modal { background:#fff; border-radius:14px; padding:16px; max-width:520px; width:calc(100vw - 40px); border:1px solid var(--border); margin:10vh auto }
+        .drawer { position:fixed; right:0; top:0; height:100%; width:min(720px,100%); background:#fff; box-shadow:-12px 0 30px rgba(0,0,0,.15); transform:translateX(100%); transition:transform .25s ease; overflow:auto; border-left:1px solid var(--border); z-index:1001 }
+        .drawer.open { transform:none }
+        .drawer__header { position:sticky; top:0; background:#fff; color:var(--fg); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; padding:10px 14px; font-weight:700 }
+        .drawer__content { padding:14px }
+        .media { width:100%; aspect-ratio:4/3; border:1px dashed var(--border); border-radius:12px; display:flex; align-items:center; justify-content:center; background:#f7faf7 }
+        .media img { max-width:100%; max-height:100%; object-fit:contain; border-radius:12px }
+        .kv { display:grid; grid-template-columns:150px 1fr; gap:8px; margin-top:6px }
+        .kv div { padding:6px 0; border-bottom:1px dashed var(--border) }
+        .kv .key { color:var(--muted); font-size:12px }
+        .chips { display:flex; gap:8px; flex-wrap:wrap }
+        .chip { border:1px solid var(--border); padding:6px 10px; border-radius:999px; cursor:pointer; background:#fff; font-size:13px; transition: background-color .15s ease, border-color .15s ease; }
+        .chip:hover { background: var(--soft); }
+        .chip.active { background:#dff3d6; border-color:#b7e3a6 }
+        .thumb { height:80px; border:1px solid var(--border); border-radius:8px; object-fit:cover }
+    </style>
+</head>
+<body>
+    <header class="app-header">
+        <div class="app-header__title"><span class="icon">🔑</span>Monono Admin</div>
+        <div class="app-header__nav">
+            <a class="btn" href="/" aria-label="ユーザポータルへ戻る"><span class="icon">🏠</span>To User Portal</a>
+            <button class="btn" id="btnLogout" style="display:none"><span class="icon">🚪</span>Logout</button>
+        </div>
+    </header>
+
+    <div class="wrap" id="app" aria-live="polite">
+        <div class="tabs-ui" id="tabs" style="display:none;">
+            <button class="tab-btn" id="tabInventory"><span class="icon">📦</span>在庫</button>
+            <button class="tab-btn" id="tabLoans"><span class="icon">🔄</span>貸出</button>
+            <button class="tab-btn" id="tabUsers"><span class="icon">👤</span>ユーザ</button>
+            <button class="tab-btn" id="tabUserReg"><span class="icon">➕</span>新規登録</button>
+            <button class="tab-btn" id="tabSettings"><span class="icon">⚙️</span>設定</button>
+            <button class="tab-btn" id="tabAudit"><span class="icon">📝</span>監査</button>
+        </div>
+
+        <section id="loginSec" class="card" aria-labelledby="loginHeading">
+            <h2 id="loginHeading"><span class="icon">🔑</span>Administrator Login</h2>
+            <form class="row login-form" id="loginForm">
+                <label for="loginEmail">Mail</label>
+                <input id="loginEmail" placeholder="メールアドレス" autocomplete="username" required>
+                <label for="loginPass">Admin PASS</label>
+                <input id="loginPass" type="password" placeholder="管理者用パスワード" autocomplete="current-password" required>
+                <button class="btn btn--primary" id="btnLogin" type="submit"><span class="icon">🔓</span>Login</button>
+            </form>
+            <div class="muted">This password is different from your general login (It can be the same email address).</div>
+        </section>
+
+        <section id="secInventory" style="display:none">
+            <h2>在庫一覧</h2>
+            <div class="row" role="search" style="align-items:flex-end">
+                <div>
+                    <label for="q">キーワード検索</label>
+                    <input id="q" placeholder="メーカー／品名／品番／ID／コード" style="min-width:320px" aria-label="在庫検索">
+                </div>
+                <div>
+                    <div class="muted" style="margin-bottom:4px">カテゴリで絞り込み</div>
+                    <div id="labelChips" class="chips"></div>
+                </div>
+                <div style="align-self:flex-end; display:flex; gap:8px;">
+                    <button class="btn" id="btnQrScan"><span class="icon" style="margin-right:4px; font-size:1em;">📷</span>QR</button>
+                    <button class="btn" id="btnSearchInv">検索</button>
+                    <button class="btn" id="btnClearInv">解除</button>
+                </div>
+            </div>
+            <div class="muted">更新は「詳細」ドロワーから行えます．</div>
+            <div class="table-container">
+                <table id="items" class="data-table">
+                    <thead>
+                        <tr>
+                            <th style="width:60px">ID</th><th>コード</th><th>メーカー</th><th>品名</th><th>品番</th>
+                            <th style="width:70px">在庫</th><th style="width:90px">貸出可</th><th>カテゴリ</th><th style="width:200px">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <div class="card">
+                <h3>在庫新規追加（コードはカテゴリに基づき自動採番）</h3>
+                <div class="row">
+                    <input id="iMaker" placeholder="メーカー">
+                    <input id="iName" placeholder="品名（必須）">
+                    <input id="iModel" placeholder="品番">
+                    <input id="iStock" type="number" placeholder="在庫数" value="1" min="0" inputmode="numeric">
+                </div>
+                <div class="row">
+                    <input id="iLocation" placeholder="置き場（棚・部屋など）">
+                    <input id="iLabels" placeholder="カテゴリ名（存在しなければ作成）">
+                </div>
+                <div class="row">
+                    <input id="iBuy" placeholder="購入URL（任意）" style="min-width:360px">
+                    <input id="iCons" placeholder="消耗品URL（カンマ区切り可，任意）" style="min-width:360px">
+                </div>
+                <div class="row"><textarea id="iAcc" placeholder="付属品メモ（任意）"></textarea></div>
+                <div class="row">
+                    <button class="btn btn--primary" id="btnCreateItem">追加</button>
+                </div>
+                <div class="row" aria-label="画像アップロード">
+                  <input type="file" id="imgFile" accept="image/*" multiple disabled>
+                  <button class="btn" id="btnImgUpload" disabled>画像アップロード(GAS版未実装)</button>
+                </div>
+                <div id="imgList" class="row" style="gap:8px; flex-wrap:wrap"></div>
+            </div>
+        </section>
+
+        <section id="secLoans" style="display:none">
+            <h2>貸出一覧</h2>
+            <div class="row">
+                <label><input type="checkbox" id="activeOnly" checked> 未返却のみ</label>
+                <input id="loanQ" placeholder="検索（学籍／メール／品名／コードなど）" aria-label="貸出検索">
+                <button class="btn" id="btnSearchLoan">検索</button>
+            </div>
+            <div class="table-container">
+                <table id="loans" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>表示名</th><th>数量</th><th>借り手</th><th>貸出日</th><th>期限</th><th>返却日</th><th>利用理由</th><th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="card">
+                <h3>貸出（学籍番号で紐付け）</h3>
+                <div class="row">
+                    <input id="sid" placeholder="学籍番号" aria-label="学籍番号">
+                    <input id="icode" placeholder="コード（自動採番コード）" aria-label="在庫コード">
+                    <input id="qty" type="number" value="1" min="1" inputmode="numeric" aria-label="数量" style="width:80px">
+                    <div>
+                        <label for="loanDueDate" class="muted" style="font-size:12px; margin-bottom:0;">返却期限</label>
+                        <input id="loanDueDate" type="date" aria-label="返却期限">
+                    </div>
+                    <button class="btn btn--primary" id="btnCreateLoan">貸出登録</button>
+                </div>
+            </div>
+        </section>
+
+        <section id="secUsers" style="display:none">
+            <h2>ユーザ一覧</h2>
+            <div class="row"><button class="btn" id="btnReloadUsers">更新</button></div>
+            <div class="table-container">
+                <table id="users" class="data-table">
+                    <thead><tr><th>ID</th><th>メール</th><th>学籍番号</th><th>氏名</th><th>学年</th><th>作成</th><th>最終ログイン</th><th>操作</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="card">
+                <h3>管理者昇格</h3>
+                <div class="row">
+                    <input id="promEmail" placeholder="対象ユーザのメール">
+                    <input id="promPass" type="password" placeholder="管理者用の新パスワード（一般用と異なること）">
+                    <button class="btn btn--primary" id="btnPromote">昇格する</button>
+                </div>
+            </div>
+            <div id="userDetailCard" class="card" style="display:none; margin-top:12px">
+                <h3>ユーザ詳細／編集</h3>
+                <div class="row">
+                    <input id="ud_id" type="number" placeholder="ID" readonly>
+                    <input id="ud_email" placeholder="メール">
+                    <input id="ud_student" placeholder="学籍番号">
+                </div>
+                <div class="row">
+                    <input id="ud_ln" placeholder="姓">
+                    <input id="ud_fn" placeholder="名">
+                    <select id="ud_grade">
+                        <option value="">学年</option>
+                        <option>B1</option><option>B2</option><option>B3</option><option>B4</option>
+                        <option>M1</option><option>M2</option><option>Doctor</option><option>Professor</option><option>Other</option>
+                    </select>
+                </div>
+                <div class="row">
+                    <button class="btn btn--primary" id="btnUserSave">保存</button>
+                </div>
+                <hr/>
+                <div class="row">
+                    <select id="pw_role"><option value="user">一般ログイン</option><option value="admin">管理者ログイン</option></select>
+                    <input id="pw_new" type="password" placeholder="新しいパスワード（8文字以上）" style="min-width:260px">
+                    <button class="btn" id="btnSetPassword">パスワード更新</button>
+                </div>
+                <div id="ud_info" class="muted"></div>
+            </div>
+        </section>
+
+        <section id="secUserReg" style="display:none">
+            <h2><span class="icon">➕</span>新規ユーザ登録</h2>
+            <div class="muted">学生・学内関係者（学生）は学籍番号を手入力，それ以外はロールに応じて自動採番されます．</div>
+            <div class="card">
+                <h3>基本情報</h3>
+                <div class="row">
+                    <input id="reg_email" placeholder="学校メールアドレス（必須）" style="min-width:320px">
+                    <input id="reg_pass_user" type="password" placeholder="一般ログイン用初期パスワード（muselab5101固定）" style="min-width:280px" value="muselab5101" readonly>
+                </div>
+                <div class="row">
+                    <input id="reg_ln" placeholder="姓（必須）">
+                    <input id="reg_fn" placeholder="名（必須）">
+                    <select id="reg_grade">
+                        <option value="">学年（任意）</option>
+                        <option>B1</option><option>B2</option><option>B3</option><option>B4</option>
+                        <option>M1</option><option>M2</option><option>Doctor</option><option>Professor</option><option>Other</option>
+                    </select>
+                </div>
+            </div>
+            <div class="card">
+                <h3>学籍番号（ロール別ルール）</h3>
+                <div class="row" style="align-items:flex-end">
+                    <div>
+                        <label for="reg_role" class="sr-only">ロール</label>
+                        <select id="reg_role">
+                            <option>学生</option>
+                            <option>教員</option>
+                            <option>学内関係者（学生）</option>
+                            <option>学内関係者（その他）</option>
+                            <option>その他</option>
+                        </select>
+                    </div>
+                    <div style="min-width:260px">
+                        <label for="reg_sid">学籍番号</label>
+                        <input id="reg_sid" placeholder="学生／学内（学生）は手入力">
+                    </div>
+                    <button class="btn" id="btnRecalc">番号を再計算</button>
+                    <span id="sidHint" class="muted">教員・学内（その他）・その他は自動採番されます．</span>
+                </div>
+            </div>
+            <div class="card">
+                <h3>オプション</h3>
+                <div class="row">
+                    <label style="display:flex;gap:8px;align-items:center">
+                        <input id="reg_admin_flag" type="checkbox"> 管理者権限を付与する
+                    </label>
+                    <input id="reg_pass_admin" type="password" placeholder="管理者ログイン用パスワード（付与時必須）" style="min-width:300px">
+                </div>
+            </div>
+            <div class="row">
+                <button class="btn btn--primary" id="btnUserCreate">登録する</button>
+                <button class="btn" id="btnUserClear">クリア</button>
+            </div>
+        </section>
+
+        <section id="secSettings" style="display:none">
+            <h2>その他設定</h2>
+            <div id="settingsMsg" class="muted" role="status" aria-live="polite">※GAS版では各種設定項目は制限されています。</div>
+
+            <div class="card" style="margin-top:12px">
+                <h3>データ操作について</h3>
+                <div class="muted">データのバックアップや一括インポート等の操作は，接続元のGoogle Spreadsheetから直接行ってください．</div>
+            </div>
+        </section>
+
+        <section id="secAudit" style="display:none">
+            <h2>監査ログ</h2>
+            <div class="row" style="margin-bottom:8px">
+                <input id="auditQ" type="text" placeholder="検索：action／entity／actor／meta"/>
+                <button class="btn" id="btnSearchAudit">検索</button>
+            </div>
+            <div class="table-container" style="max-height: 40vh;">
+                <table id="auditTbl" class="data-table">
+                    <thead>
+                        <tr><th>ID</th><th>日時</th><th>アクション</th><th>対象</th><th>ID</th><th>操作者</th><th>メタ</th></tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <div id="toast" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+    <div id="confirmBackdrop" class="backdrop" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+        <div class="modal">
+            <h3 id="confirmTitle" style="margin-top:0">確認</h3>
+            <div id="confirmMsg" style="margin:8px 0 12px;"></div>
+            <div class="right">
+                <button class="btn" id="confirmNo">キャンセル</button>
+                <button class="btn btn--danger" id="confirmYes">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="detailBackdrop" class="backdrop" aria-hidden="true"></div>
+    <aside id="detailDrawer" class="drawer" aria-labelledby="detailTitle" aria-modal="true" role="dialog">
+        <header class="drawer__header">
+            <div>在庫詳細</div>
+            <button class="btn" id="btnCloseDetail">閉じる</button>
+        </header>
+        <div class="drawer__content">
+            <div class="grid">
+                <div class="card" style="margin:0">
+                    <div class="media" id="d_media"><span class="muted">No image</span></div>
+                    <div class="row" style="margin-top:8px">
+                        <input type="file" id="d_img_file" accept="image/*" multiple disabled>
+                        <button class="btn" id="btnDetailImgUpload" disabled>画像アップロード(未実装)</button>
+                    </div>
+                    <div id="d_img_list" class="row" style="gap:8px; flex-wrap:wrap"></div>
+                </div>
+                <div class="card" style="margin:0">
+                    <h2 class="title" id="d_title">品名</h2>
+                    <div class="row" style="gap:8px;margin:4px 0 10px"><span class="pill" id="d_badge">状態</span></div>
+                    <div class="kv" id="d_kv"></div>
+                    <h3 style="margin:12px 0 6px;font-size:13px;color:var(--muted)">URL／付属品</h3>
+                    <div class="kv">
+                        <div class="key">購入URL</div><div><input id="d_buy" placeholder="https://..."></div>
+                        <div class="key">消耗品URL</div><div><input id="d_cons" placeholder="カンマ区切り"></div>
+                        <div class="key">付属品メモ</div><div><textarea id="d_acc" style="min-height:60px"></textarea></div>
+                    </div>
+                    <h3 style="margin:12px 0 6px;font-size:13px;color:var(--muted)">QR</h3>
+                    <div class="row">
+                        <button class="btn" id="btnQRPNG">QRコードを表示</button>
+                    </div>
+                    <h3 style="margin:12px 0 6px;font-size:13px;color:var(--muted)">現在借りている人</h3>
+                    <div id="d_borrowers" class="muted">取得中…</div>
+                    <div class="right" style="margin-top:12px">
+                        <button class="btn" id="d_toggleBtn">貸出停止</button>
+                        <button class="btn btn--primary" id="d_saveBtn">編集を保存</button>
+                        <button class="btn btn--danger" id="d_deleteBtn">削除</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <aside id="loanDetailDrawer" class="drawer" aria-labelledby="loanDetailTitle" aria-modal="true" role="dialog">
+        <header class="drawer__header">
+            <div id="loanDetailTitle">貸出詳細</div>
+            <button class="btn" id="btnCloseLoanDetail">閉じる</button>
+        </header>
+        <div class="drawer__content">
+            <div class="card" style="margin:0">
+                <h2 class="title" id="ld_title">品名</h2>
+                <div class="kv" id="ld_kv"></div>
+                <div class="right" style="margin-top:12px">
+                    <button class="btn btn--primary" id="ld_returnBtn">返却</button>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- QRリーダー用モーダル -->
+    <div id="qrBackdrop" class="backdrop" style="z-index:1100; display:none;">
+        <div id="qrModal" style="position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; padding:16px; border-radius:16px; width:min(500px, 90vw); text-align:center; box-shadow: 0 8px 24px rgba(0,0,0,.2);">
+            <h3 style="margin-top:0;">QRコードをスキャン</h3>
+            <div style="position:relative; width:100%; max-width:400px; margin:auto; aspect-ratio:1/1; background:#333; border-radius:12px; overflow:hidden;">
+                <video id="qrVideo" playsinline style="width:100%; height:100%; object-fit:cover;"></video>
+                <div id="qrLine" style="position:absolute; top:50%; left:10%; right:10%; height:2px; background:red; box-shadow:0 0 10px red; display:none; border-radius:2px;"></div>
+            </div>
+            <div id="qrMessage" class="muted" style="margin-top:8px; min-height:1.2em;">カメラを起動しています...</div>
+            <button class="btn" style="margin-top:12px;" onclick="QRReader.stop()">キャンセル</button>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // ★★★ GASウェブアプリのURLをここに設定 ★★★
+        // ==========================================
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbykCzvGmlV5CRPrZwGREiLnT_PasBLsyXCQtTaWJu0zCUePpezN4QYaSVBUh1LNf-5nLw/exec"; 
+
+        const URL_CONFIG = {
+            ADMIN_TOKEN: '/token', // GASの/tokenに対応させる
+            CATEGORIES: '/categories',
+            ADMIN_CATEGORIES: '/admin/categories',
+            INVENTORY: '/inventory',
+            ADMIN_ITEMS: '/admin/items',
+            ADMIN_ITEM_DETAIL: (id) => `/admin/items/${id}`,
+            LOANS: '/loans',
+            LOAN_RETURN: '/loans/return',
+            ADMIN_USERS: '/admin/users',
+            ADMIN_USER_DETAIL: (id) => `/admin/users/${id}`,
+            ADMIN_NEXT_STUDENT_ID: '/admin/student_id/next',
+            ADMIN_SETTINGS: '/admin/settings',
+            ADMIN_AUDIT: '/admin/audit',
+        };
+
+        const State = { token: null };
+
+        function getElement(id) { return document.getElementById(id); }
+
+        const Toast = (()=>{
+            const box=getElement('toast');
+            const DURATION = 3500;
+            function push(msg,cls=''){
+                const d=document.createElement('div');
+                d.className=`toast ${cls}`; d.textContent=msg; box.appendChild(d);
+                setTimeout(()=>d.remove(),DURATION);
+            }
+            return { ok:(m)=>push(m,'ok'), error:(m)=>push(m,'error'), info:(m)=>push(m,'') };
+        })();
+
+        const Confirm = (()=>{
+            const bd = getElement('confirmBackdrop');
+            const msg = getElement('confirmMsg');
+            const yes = getElement('confirmYes');
+            const no = getElement('confirmNo');
+            let resolver=null;
+            yes.onclick = ()=>{ hide(); resolver?.(true); };
+            no.onclick = ()=>{ hide(); resolver?.(false); };
+            function show(text){ msg.textContent = text; bd.style.display='block'; return new Promise(res=>resolver=res); }
+            function hide(){ bd.style.display='none'; }
+            return { show, hide };
+        })();
+
+        // ==========================================
+        // GAS用 fetch コアロジック
+        // ==========================================
+        async function fetchJSON(path, opt = {}) {
+            const method = opt.method || 'GET';
+            let url = GAS_URL;
+            let init = { ...opt };
+            const token = localStorage.getItem('lab_server_admin_token') || State.token;
+            
+            if (method === 'GET') {
+                // GETリクエスト: pathとtokenをクエリパラメータに
+                const separator = path.includes('?') ? '&' : '?';
+                url += `?path=${encodeURIComponent(path.split('?')[0])}`;
+                if (path.includes('?')) url += `&${path.split('?')[1]}`;
+                if (token) url += `&token=${token}`;
+                init.method = 'GET';
+            } else {
+                // POST等: ペイロードに_methodや_pathを含める (CORS対応でtext/plainで送信)
+                init.method = 'POST';
+                init.headers = { ...(opt.headers || {}), 'Content-Type': 'text/plain' }; 
+                
+                let payload = {};
+                // FormData変換ヘルパー (GAS制約用)
+                if (opt.body instanceof FormData) {
+                     for (let [key, value] of opt.body.entries()) {
+                         if (!(value instanceof File)) payload[key] = value;
+                     }
+                } else if (opt.body && typeof opt.body === 'string') {
+                     try { payload = JSON.parse(opt.body); } catch(e) {}
+                } else if (opt.body && typeof opt.body === 'object') {
+                     payload = opt.body;
+                }
+                
+                payload._method = method;
+                payload._path = path.split('?')[0]; 
+                if (token) payload.token = token;
+                
+                init.body = JSON.stringify(payload);
+            }
+
+            try {
+                const r = await fetch(url, init);
+                const ct = r.headers.get('content-type') || '';
+                if (!r.ok) {
+                    let msg = r.statusText;
+                    try { const j = ct.includes('json') ? await r.json() : await r.text(); msg = (j?.detail)||j||msg; } catch{}
+                    Toast.error(`${path}：${msg}`); throw new Error(msg);
+                }
+                if (ct.includes('json')) {
+                    const data = await r.json();
+                    if (data && data.detail) { // エラーレスポンスを200で返した場合のハンドリング
+                        Toast.error(`${path}：${data.detail}`); throw new Error(data.detail);
+                    }
+                    return data.items !== undefined ? data.items : data;
+                }
+                return r.text();
+            } catch(e) { console.error(e); throw e; }
+        }
+
+        // tryFetchSequentialの互換性維持（GASは単一エンドポイントのため第一引数のみ使用）
+        async function tryFetchSequential(candidates, makeInit) {
+            const path = candidates[0];
+            const opt = makeInit ? makeInit(path) : {};
+            return await fetchJSON(path, opt);
+        }
+
+        // withAuthはfetchJSONに統合されたのでダミー
+        function withAuth(init={}) { return init; }
+
+        function fmtDate(s){ if(!s) return ""; try{ return new Intl.DateTimeFormat('ja-JP',{dateStyle:'medium', timeStyle:'medium', timeZone:'Asia/Tokyo'}).format(new Date(s)); }catch{ return new Date(s).toLocaleString('ja-JP'); } }
+        function escapeHtml(str){ return (str??"").toString().replace(/[&<>"']/g, s=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[s])); }
+        function ymdToLocalDate(ymd){ if(!ymd) return null; const [y,m,d]=ymd.split('-').map(n=>parseInt(n,10)); return new Date(y,(m||1)-1,(d||1),0,0,0,0); }
+        function ceilDaysDiff(fromDate,toDate){ return Math.ceil((toDate-fromDate)/(1000*60*60*24)); }
+        function boolMark(v){ return v ? '<span class="pill ok">○</span>' : '<span class="pill ng">―</span>'; }
+        function onEnter(id, handler){ const el=getElement(id); if(!el) return; el.addEventListener('keydown', ev=>{ if(ev.key==='Enter') handler(); }); }
+        function debounce(fn, ms=300){ let t=null; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
+
+        const DOM = {
+            loginSec: getElement('loginSec'), loginForm: getElement('loginForm'),
+            tabs: getElement('tabs'), btnLogout: getElement('btnLogout'),
+            iMaker: getElement('iMaker'), iName: getElement('iName'), iModel: getElement('iModel'), iStock: getElement('iStock'),
+            iLocation: getElement('iLocation'), iLabels: getElement('iLabels'), iBuy: getElement('iBuy'), iAcc: getElement('iAcc'),
+            iCons: getElement('iCons'), itemsTable: getElement('items'),
+            labelChips: getElement('labelChips'), q: getElement('q'), btnCreateItem: getElement('btnCreateItem'),
+            activeOnly: getElement('activeOnly'), loanQ: getElement('loanQ'), loansTable: getElement('loans'), loanDueDate: getElement('loanDueDate'),
+            sid: getElement('sid'), icode: getElement('icode'), qty: getElement('qty'),
+            btnCreateLoan: getElement('btnCreateLoan'),
+            reg_role: getElement('reg_role'), reg_sid: getElement('reg_sid'), btnRecalc: getElement('btnRecalc'), sidHint: getElement('sidHint'),
+            detailDrawer: getElement('detailDrawer'), detailBackdrop: getElement('detailBackdrop'), d_kv: getElement('d_kv'),
+            d_buy: getElement('d_buy'), d_cons: getElement('d_cons'), d_acc: getElement('d_acc'), d_img_file: getElement('d_img_file'),
+            d_img_list: getElement('d_img_list'), d_media: getElement('d_media'), d_title: getElement('d_title'),
+            d_badge: getElement('d_badge'), d_toggleBtn: getElement('d_toggleBtn'), d_saveBtn: getElement('d_saveBtn'),
+            d_deleteBtn: getElement('d_deleteBtn'), d_borrowers: getElement('d_borrowers'),
+            loanDetailDrawer: getElement('loanDetailDrawer'),
+            userDetailCard: getElement('userDetailCard'), ud_id: getElement('ud_id'), ud_email: getElement('ud_email'),
+            ud_student: getElement('ud_student'), ud_ln: getElement('ud_ln'), ud_fn: getElement('ud_fn'),
+            ud_grade: getElement('ud_grade'), ud_info: getElement('ud_info'), pw_role: getElement('pw_role'),
+            pw_new: getElement('pw_new'), promEmail: getElement('promEmail'), promPass: getElement('promPass')
+        };
+
+        const Router = (()=>{
+            const sections = ['Inventory','Loans','Users','UserReg','Settings','Audit'];
+            function hideAll(){ sections.forEach(x=>{ getElement('sec'+x).style.display='none'; }); setActiveTab(null); }
+            function setActiveTab(tab){
+                sections.forEach(x=>{
+                    const btn = getElement("tab"+x);
+                    if(btn) btn.classList.toggle("active", x===tab);
+                });
+            }
+            function show(which){
+                sections.forEach(x=>{ getElement('sec'+x).style.display = (x===which)?'block':'none'; });
+                setActiveTab(which);
+                localStorage.setItem('admin.tab', which);
+                if (which === 'Inventory') Inventory.load();
+                if (which === 'Loans') Loans.load();
+                if (which === 'Users') Users.load();
+                if (which === 'Audit') Audit.load();
+            }
+            function restore(){ if(!State.token){ hideAll(); return; } show(localStorage.getItem('admin.tab') || 'Inventory'); }
+            return { show, restore, hideAll };
+        })();
+
+        async function login(ev){
+            ev?.preventDefault?.();
+            const username = getElement('loginEmail').value.trim();
+            const password = getElement('loginPass').value;
+            const btn = getElement('btnLogin'); btn.disabled=true;
+            try{
+                // GAS版ではJSONで投げる
+                const r = await fetchJSON(URL_CONFIG.ADMIN_TOKEN, { method:'POST', body: JSON.stringify({username, password}) });
+                State.token = r.access_token;
+                localStorage.setItem('lab_server_admin_token', State.token);
+                DOM.loginSec.style.display='none';
+                DOM.btnLogout.style.display='inline-block';
+                DOM.tabs.style.display='flex';
+                Router.show('Inventory');
+                Toast.ok('ログインしました');
+            } finally { btn.disabled=false; }
+        }
+        function logout(){ State.token=null; localStorage.removeItem('lab_server_admin_token'); location.reload(); }
+
+        const Inventory = (()=>{
+            let allItems=[]; let activeCategories=new Set(); let knownCategories=[];
+            function deriveCategories(items){
+                const set=new Set();
+                (items||[]).forEach(r=>{
+                    const catName = r.category_name || (r.labels && r.labels[0]) || null;
+                    if(catName) set.add(String(catName));
+                });
+                knownCategories=Array.from(set).sort();
+            }
+            function renderCategoryChips(){
+                DOM.labelChips.innerHTML='';
+                knownCategories.forEach(l=>{
+                    const b=document.createElement('button');
+                    b.type='button'; b.className='chip'+(activeCategories.has(l)?' active':''); b.textContent=l;
+                    b.onclick=()=>{ if(activeCategories.has(l)) activeCategories.delete(l); else activeCategories.add(l); renderCategoryChips(); renderTable(); };
+                    DOM.labelChips.appendChild(b);
+                });
+            }
+            function passCategoryFilter(r){
+                if(activeCategories.size===0) return true;
+                const catName = r.category_name || (r.labels && r.labels[0]) || '';
+                return activeCategories.has(String(catName));
+            }
+            async function load(){
+                const q=DOM.q.value.trim();
+                const url=q?`${URL_CONFIG.INVENTORY}?q=${encodeURIComponent(q)}`:URL_CONFIG.INVENTORY;
+                try {
+                    const rows=await fetchJSON(url);
+                    allItems=Array.isArray(rows)?rows:[];
+                    deriveCategories(allItems);
+                    renderCategoryChips();
+                    renderTable();
+                } catch(e) { Toast.error(`在庫ロード失敗: ${e.message}`); }
+            }
+            function clearFilters(){ activeCategories.clear(); DOM.q.value=''; renderCategoryChips(); renderTable(); }
+            function renderTable(){
+                const tb=DOM.itemsTable.querySelector('tbody'); tb.innerHTML='';
+                const filtered=allItems.filter(passCategoryFilter);
+                filtered.forEach(r=>{
+                    const tr=document.createElement('tr');
+                    const categoryDisplay = escapeHtml(r.category_name || (r.labels && r.labels[0]) || '');
+                    tr.innerHTML=`
+                        <td>${r.id}</td><td>${escapeHtml(r.code||'')}</td><td>${escapeHtml(r.manufacturer||'')}</td>
+                        <td>${escapeHtml(r.product_name||'')}</td><td>${escapeHtml(r.model_number||'')}</td>
+                        <td>${r.stock}</td><td>${boolMark(r.available)}</td><td>${categoryDisplay}</td>
+                        <td class="right"><button class="btn btn--primary" data-act="detail">詳細／編集</button></td>`;
+                    tr.querySelector('[data-act="detail"]').onclick=()=>openDetail(r.id);
+                    tb.appendChild(tr);
+                });
+            }
+            async function create(){
+                const btn=DOM.btnCreateItem; btn.disabled=true;
+                try{
+                    const product_name=DOM.iName.value.trim(); if(!product_name){ Toast.info('品名は必須です'); return; }
+                    const category_name=DOM.iLabels.value.trim()||null;
+                    let category_id = null;
+                    if(category_name) {
+                        const categories = await fetchJSON(URL_CONFIG.CATEGORIES);
+                        let category = categories.find(c => c.name === category_name);
+                        if (!category) {
+                            try {
+                                const newCatRes = await fetchJSON(URL_CONFIG.ADMIN_CATEGORIES, { method: 'POST', body: JSON.stringify({name: category_name}) });
+                                category = newCatRes; Toast.info(`新カテゴリ '${category_name}' を作成しました．`); 
+                            } catch (e) { console.error("Category creation failed:", e); }
+                        }
+                        if (category) category_id = category.id;
+                    }
+                    const body={
+                        stock:Number(DOM.iStock.value||'0'), manufacturer:DOM.iMaker.value.trim()||null, product_name, model_number:DOM.iModel.value.trim()||null,
+                        location:DOM.iLocation.value.trim()||null, category_id: category_id,
+                        purchase_url:DOM.iBuy.value.trim()||null, accessories:DOM.iAcc.value||null, consumables_url:DOM.iCons.value.trim()||null,
+                        description:null, available:true
+                    };
+                    const created=await fetchJSON(URL_CONFIG.ADMIN_ITEMS,{method:'POST', body:JSON.stringify(body)});
+                    Toast.ok(`追加しました（ID=${created.id||'?'}／コード=${created.code||'?'}）`);
+                    DOM.iMaker.value=''; DOM.iName.value=''; DOM.iModel.value=''; DOM.iStock.value='1'; DOM.iLocation.value=''; DOM.iLabels.value=''; DOM.iBuy.value=''; DOM.iCons.value=''; DOM.iAcc.value='';
+                    await load();
+                } finally { btn.disabled=false; }
+            }
+            let current=null;
+            async function openDetail(id){
+                DOM.detailBackdrop.style.display='block'; DOM.detailDrawer.classList.add('open');
+                try {
+                    const item=await fetchJSON(URL_CONFIG.ADMIN_ITEM_DETAIL(id)); current=item;
+                    DOM.d_media.innerHTML=''; const imgUrl=(item.images&&item.images[0])||item.image_url||'';
+                    if(imgUrl){ const img=new Image(); img.src=imgUrl; img.alt=item.product_name||'image'; DOM.d_media.appendChild(img); }
+                    else{ DOM.d_media.innerHTML=`<span class="muted">No image</span>`; }
+                    DOM.d_title.textContent=item.product_name||'(品名未設定)';
+                    const lendable=(item.available===true || item.available==='true'); DOM.d_badge.className='pill '+(lendable?'ok':'ng'); DOM.d_badge.textContent=lendable?'貸出可':'貸出停止中';
+                    const fields=[
+                        ['内部ID','id',false], ['コード','code',false], ['メーカー','manufacturer',true], ['品名','product_name',true], ['品番','model_number',true],
+                        ['在庫','stock',true,'number'], ['置き場','location',true], ['カテゴリ名','category_name',true], ['説明','description',true]
+                    ];
+                    DOM.d_kv.innerHTML = fields.map(([label,key,editable,kind])=>{
+                        const val=(key==='category_name')?(item.category_name||''):(item[key]??'');
+                        const style = "width:100%;padding:8px;border:1px solid var(--border);border-radius:8px";
+                        const valHtml = !editable ? `<span>${escapeHtml(String(val))}</span>` : (kind==='number' ? `<input data-k="${key}" value="${escapeHtml(String(val))}" inputmode="numeric" style="${style}">` : `<input data-k="${key}" value="${escapeHtml(String(val))}" placeholder="${label}" style="${style}">`);
+                        return `<div class="key">${label}</div><div>${valHtml}</div>`;
+                    }).join('');
+                    DOM.d_buy.value=item.purchase_url||''; DOM.d_cons.value=item.consumables_url||''; DOM.d_acc.value=item.accessories||'';
+                    try{
+                        // GAS版で未実装の可能性も考慮
+                        const borrowers=await fetchJSON(`/items/${item.id}/borrowers`);
+                        DOM.d_borrowers.innerHTML = borrowers.length ? borrowers.map(lo=>`<div>・${escapeHtml(String(lo.user_name||'不明'))}（${fmtDate(lo.loaned_at||'')}〜）</div>`).join('') : '<span class="muted">現在の借用者はいません</span>';
+                    }catch{ DOM.d_borrowers.innerHTML='<span class="muted">取得できませんでした</span>'; }
+                    DOM.d_toggleBtn.textContent=lendable?'貸出停止':'貸出停止解除';
+                    DOM.d_toggleBtn.onclick=async ()=>{
+                        try{ await fetchJSON(URL_CONFIG.ADMIN_ITEM_DETAIL(item.id),{method:'PATCH',body:JSON.stringify({available:!lendable})}); Toast.ok('状態を更新しました'); await openDetail(item.id); await load(); }catch{}
+                    };
+                    DOM.d_saveBtn.onclick=async ()=>{
+                        try{
+                            const inputs=Array.from(document.querySelectorAll('#d_kv input[data-k]'));
+                            const patch={};
+                            inputs.forEach(inp=>{
+                                if(inp.dataset.k==='category_name'){ patch.category_name=inp.value.trim()||null; }
+                                else if(inp.dataset.k==='stock'){ patch.stock=Number(inp.value||0); }
+                                else{ patch[inp.dataset.k]=inp.value; }
+                            });
+                            // カテゴリ名の処理
+                            if('category_name' in patch){
+                                const cat_name = patch.category_name; delete patch.category_name;
+                                let category_id = null;
+                                if(cat_name){
+                                    const cats = await fetchJSON(URL_CONFIG.CATEGORIES);
+                                    let category = cats.find(c => c.name === cat_name);
+                                    if (!category) {
+                                        try {
+                                            const newCatRes = await fetchJSON(URL_CONFIG.ADMIN_CATEGORIES, { method: 'POST', body: JSON.stringify({name:cat_name}) });
+                                            category = newCatRes; Toast.info(`新カテゴリ '${cat_name}' を作成しました．`); 
+                                        } catch (e) {}
+                                    }
+                                    if(category) category_id = category.id;
+                                }
+                                patch.category_id = category_id;
+                            }
+                            patch.purchase_url=DOM.d_buy.value||null; patch.consumables_url=DOM.d_cons.value||null; patch.accessories=DOM.d_acc.value||null;
+                            await fetchJSON(URL_CONFIG.ADMIN_ITEM_DETAIL(item.id),{method:'PATCH',body:JSON.stringify(patch)});
+                            Toast.ok('更新しました'); await openDetail(item.id); await load();
+                        }catch(e){ Toast.error(`保存失敗: ${e.message}`); }
+                    };
+                    DOM.d_deleteBtn.onclick=async ()=>{
+                        const ok=await Confirm.show(`ID ${item.id} を削除します．よろしいですか？`); if(!ok) return;
+                        try{ await fetchJSON(URL_CONFIG.ADMIN_ITEM_DETAIL(item.id),{method:'DELETE'}); Toast.ok('削除しました'); closeDetail(); await load(); }catch{}
+                    };
+                    renderDetailImages(item.images||[]);
+                    
+                    // QRコード(Google Charts API)
+                    getElement('btnQRPNG').onclick=async ()=>{
+                        try {
+                            const res = await fetchJSON(`/items/${item.id}/qrcode.png`);
+                            if (res.qr_url) { window.open(res.qr_url, '_blank', 'noopener'); }
+                        } catch (e) { Toast.error(e.message); }
+                    };
+                } catch (e) { Toast.error(`詳細情報の取得に失敗: ${e.message}`); closeDetail(); }
+            }
+            function closeDetail(){ DOM.detailDrawer.classList.remove('open'); DOM.detailBackdrop.style.display='none'; }
+            function renderDetailImages(list){
+                DOM.d_img_list.innerHTML='';
+                (list||[]).forEach(u=>{ const el=document.createElement('img'); el.src=u; el.className='thumb'; el.alt='item image'; DOM.d_img_list.appendChild(el); });
+            }
+            return { load, clearFilters, create, openDetail, closeDetail };
+        })();
+
+        const Loans = (()=>{
+            async function load(){
+                const activeOnly=DOM.activeOnly.checked; const q=DOM.loanQ.value.trim();
+                const url=`${URL_CONFIG.LOANS}?active_only=${activeOnly}${q?`&q=${encodeURIComponent(q)}`:''}`;
+                try {
+                    const rows=await fetchJSON(url);
+                    const tb=DOM.loansTable.querySelector('tbody'); tb.innerHTML='';
+                    (rows||[]).forEach(r=>{
+                        const tr=document.createElement('tr');
+                        tr.innerHTML=`
+                            <td>${escapeHtml(r.item_name)}</td><td>${r.qty}</td><td>${escapeHtml(r.borrower || '')}</td>
+                            <td>${fmtDate(r.loaned_at)}</td><td>${fmtDate(r.due_at)||'-'}</td><td>${fmtDate(r.returned_at)||'-'}</td>
+                            <td>${escapeHtml(r.purpose||'')}</td><td><button class="btn" data-act="detail">詳細</button></td>`;
+                        tr.querySelector('[data-act="detail"]').onclick=()=>openDetail(r.id);
+                        tb.appendChild(tr);
+                    });
+                } catch (e) { Toast.error(`貸出ロード失敗: ${e.message}`); }
+            }
+            async function openDetail(id){
+                let d=null;
+                try{
+                    const list=await fetchJSON(`${URL_CONFIG.LOANS}?active_only=false`); d=(list||[]).find(x=>String(x.id)===String(id))||{};
+                }catch{}
+                if(!d?.id){ Toast.error('貸出情報が見つかりません'); return; }
+                DOM.detailBackdrop.style.display='block'; DOM.loanDetailDrawer.classList.add('open');
+                getElement('ld_title').textContent=d.item_name || '(品名不明)';
+                const rows=[
+                    ['貸出ID','id'],['コード','item_code'],['数量','qty'],['借り手','borrower'],
+                    ['貸出日','loaned_at'],['期限','due_at'],['返却日','returned_at'],['利用理由','purpose']
+                ];
+                const kv=getElement('ld_kv'); kv.innerHTML = rows.map(([label,key])=>{
+                    let val=d[key]; if(key==='loaned_at'||key==='due_at'||key==='returned_at'){ val=fmtDate(val)||'-'; }
+                    return `<div class="key">${label}</div><div>${escapeHtml(val??'-')}</div>`;
+                }).join('');
+                const btn=getElement('ld_returnBtn'); btn.disabled=!!d.returned_at;
+                btn.textContent=d.returned_at?'返却済み':'返却';
+                btn.onclick=async ()=>{
+                    if(d.returned_at) return;
+                    try { await fetchJSON(URL_CONFIG.LOAN_RETURN,{method:'POST',body:JSON.stringify({loan_id:id})}); Toast.ok('返却しました'); closeDetail(); await load(); await Inventory.load();
+                    } catch (e) { Toast.error(`返却処理失敗: ${e.message}`); }
+                };
+            }
+            function closeDetail(){ DOM.loanDetailDrawer.classList.remove('open'); DOM.detailBackdrop.style.display='none'; }
+            async function create(){
+                const btn=DOM.btnCreateLoan; btn.disabled=true;
+                try{
+                    const student_id=DOM.sid.value.trim();
+                    const item_code=DOM.icode.value.trim();
+                    const qty=Math.max(1, parseInt(DOM.qty.value||'1',10));
+                    const dueStr = DOM.loanDueDate.value;
+                    let days = null;
+                    if (dueStr) {
+                        const today = new Date(); today.setHours(0, 0, 0, 0);
+                        const dueDate = ymdToLocalDate(dueStr);
+                        const diff = ceilDaysDiff(today, dueDate);
+                        if (diff < 1) { Toast.error('返却期限は明日以降の日付を指定してください'); return; }
+                        days = diff;
+                    }
+                    if(!item_code){ Toast.info('コードは必須です'); return; }
+                    await fetchJSON(URL_CONFIG.LOANS,{method:'POST',body:JSON.stringify({item_code, qty, days})}); // student_id はGAS側で実装が必要かも
+                    Toast.ok('貸出登録しました'); await load(); await Inventory.load();
+                } catch (e) { Toast.error(`貸出登録失敗: ${e.message}`); }
+                finally { btn.disabled=false; }
+            }
+            return { load, openDetail, closeDetail, create };
+        })();
+
+        const QRReader = (() => {
+            const backdrop = getElement('qrBackdrop');
+            const video = getElement('qrVideo');
+            const message = getElement('qrMessage');
+            const line = getElement('qrLine');
+            let stream = null;
+            let animationFrameId = null;
+
+            function tick() {
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    line.style.display = 'block';
+                    message.textContent = '枠内にQRコードを合わせてください';
+                    const canvas = document.createElement('canvas');
+                    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+                    const context = canvas.getContext('2d');
+                    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+                    const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
+                    if (code && code.data) {
+                        line.style.background = 'lime';
+                        handleCode(code.data);
+                        return;
+                    }
+                }
+                animationFrameId = requestAnimationFrame(tick);
+            }
+
+            async function findAndOpenByCode(code) {
+                Toast.info(`コード「${code}」を検索中...`);
+                try {
+                    const results = await fetchJSON(`${URL_CONFIG.INVENTORY}?q=${encodeURIComponent(code)}`);
+                    if (results && results.length === 1) {
+                        Inventory.openDetail(results[0].id);
+                    } else if (results && results.length > 1) {
+                        Toast.info(`複数件ヒットしました。一覧を確認してください。`);
+                        DOM.q.value = code;
+                        Inventory.load();
+                    } else {
+                        Toast.error(`コードに一致する備品が見つかりません。`);
+                    }
+                } catch(e) { Toast.error(`検索に失敗しました: ${e.message}`); }
+            }
+
+            function handleCode(data) {
+                stop();
+                const codeData = (data || '').trim();
+                if (!codeData) return;
+                const match = codeData.match(/(?:\/items\/)(\d+)/);
+                if (match && match[1]) {
+                    Inventory.openDetail(match[1]); return;
+                }
+                if (/^\d+$/.test(codeData)) {
+                    Inventory.openDetail(codeData); return;
+                }
+                findAndOpenByCode(codeData); 
+            }
+
+            async function start() {
+                if (typeof jsQR === 'undefined') { Toast.error('QRリーダーのライブラリが読み込めていません。'); return; }
+                if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) { Toast.error('お使いのブラウザはカメラ機能に対応していません。'); return; }
+                backdrop.style.display = 'block'; message.textContent = 'カメラを起動しています...';
+                line.style.display = 'none'; line.style.background = 'red';
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                    video.srcObject = stream; video.setAttribute('playsinline', true); video.play();
+                    animationFrameId = requestAnimationFrame(tick);
+                } catch (err) { message.textContent = 'カメラの起動に失敗しました。'; }
+            }
+
+            function stop() {
+                if (animationFrameId) { cancelAnimationFrame(animationFrameId); animationFrameId = null; }
+                if (stream) { stream.getTracks().forEach(track => track.stop()); stream = null; }
+                video.srcObject = null; backdrop.style.display = 'none';
+            }
+            return { start, stop };
+        })();
+
+        const Users = (()=>{
+            async function load(){
+                try {
+                    const rows = await fetchJSON(URL_CONFIG.ADMIN_USERS);
+                    const tb=getElement('users').querySelector('tbody'); tb.innerHTML='';
+                    (rows||[]).forEach(r=>{
+                        const tr=document.createElement('tr');
+                        tr.innerHTML = `
+                            <td>${r.id}</td><td>${escapeHtml(r.email||'')}</td><td>${escapeHtml(r.student_id||'')}</td>
+                            <td>${escapeHtml((r.last_name||'')+' '+(r.first_name||''))}</td><td>${escapeHtml(r.grade || '')}</td>
+                            <td>${fmtDate(r.created_at)}</td><td>${fmtDate(r.last_login_at)}</td>
+                            <td><button class="btn" onclick="Users.openDetail('${r.id}')">詳細</button><button class="btn btn--danger" onclick="Users.delete('${r.id}')" ${r.is_admin?'disabled':''}>削除</button></td>`;
+                        tb.appendChild(tr);
+                    });
+                } catch (e) { Toast.error(`ユーザロード失敗: ${e.message}`); }
+            }
+            async function del(id){
+                const ok=await Confirm.show(`ユーザID ${id} を削除します．よろしいですか？`); if(!ok) return;
+                try { await fetchJSON(URL_CONFIG.ADMIN_USER_DETAIL(id), { method:'DELETE' }); Toast.ok('削除しました'); load(); } catch (e) { Toast.error(`削除失敗: ${e.message}`); }
+            }
+            async function openDetail(id){
+                try {
+                    // GASバックエンドに対応するため、全ユーザーリストから検索する簡易実装
+                    const list = await fetchJSON(URL_CONFIG.ADMIN_USERS);
+                    const d = list.find(x => String(x.id) === String(id));
+                    if (!d) throw new Error('User not found');
+                    
+                    DOM.userDetailCard.style.display='block';
+                    DOM.ud_id.value=d.id; DOM.ud_email.value=d.email||''; DOM.ud_student.value=d.student_id||'';
+                    DOM.ud_ln.value=d.last_name||''; DOM.ud_fn.value=d.first_name||''; DOM.ud_grade.value=d.grade||'';
+                    DOM.ud_info.textContent = `ログイン： 一般=${d.password_hash ?'○':'―'} ／ 管理=${d.is_admin ?'○':'―'}`;
+                    DOM.ud_email.focus();
+                } catch (e) { Toast.error(`ユーザ詳細取得失敗: ${e.message}`); }
+            }
+            async function saveDetail(){
+                const id=DOM.ud_id.value;
+                const json = { email:(DOM.ud_email.value||'').trim()||null, student_id:(DOM.ud_student.value||'').trim()||null, last_name:DOM.ud_ln.value, first_name:DOM.ud_fn.value, grade:DOM.ud_grade.value||null };
+                try { await fetchJSON(URL_CONFIG.ADMIN_USER_DETAIL(id), { method:'PATCH', body: JSON.stringify(json) }); Toast.ok('保存しました'); await load(); await openDetail(id); } catch (e) { Toast.error(`保存失敗: ${e.message}`); }
+            }
+            async function setPassword(){
+                const id=DOM.ud_id.value; const role=DOM.pw_role.value; const pw=DOM.pw_new.value;
+                if(!pw || pw.length<8){ Toast.info('8文字以上で入力してください'); return; }
+                const ok=await Confirm.show(`ユーザID ${id} の ${role} 用パスワードを更新します．よろしいですか？`); if(!ok) return;
+                try {
+                    await fetchJSON(`${URL_CONFIG.ADMIN_USER_DETAIL(id)}/password`, { method:'POST', body: JSON.stringify({role: role, new_password: pw}) });
+                    Toast.ok('パスワードを更新しました'); DOM.pw_new.value=''; await openDetail(id);
+                } catch (e) { Toast.error(`パスワード更新失敗: ${e.message}`); }
+            }
+            async function promote(){
+                const email=DOM.promEmail.value.trim(); const admin_password=DOM.promPass.value;
+                if(!email || !admin_password){ Toast.info('メールと管理者用パスワードを入力してください'); return; }
+                const ok=await Confirm.show(`ユーザ ${email} に管理者権限を付与します．よろしいですか？`); if(!ok) return;
+                try {
+                    await fetchJSON('/admin/users/promote', { method:'POST', body: JSON.stringify({email: email, password: admin_password}) });
+                    Toast.ok('管理者資格を付与しました'); DOM.promEmail.value=''; DOM.promPass.value=''; load();
+                } catch (e) { Toast.error(`管理者昇格失敗: ${e.message}`); }
+            }
+            window.Users = { load, delete:del, openDetail, saveDetail, setPassword, promote };
+            return window.Users;
+        })();
+
+        const UserReg = (()=>{
+            const isManualRole = (role) => (role === '学生' || role === '学内関係者（学生）');
+            const isAutoRole = (role) => ['教員', '学内関係者（その他）', 'その他'].includes(role);
+            function onRoleChange(){
+                const role=DOM.reg_role.value; const isManual=isManualRole(role);
+                DOM.reg_sid.disabled=!isManual; DOM.reg_sid.placeholder=isManual?'学籍番号を入力':'自動採番（再計算可）';
+                DOM.btnRecalc.disabled=isManual;
+                DOM.sidHint.textContent=isManual?'学生・学内（学生）は手入力です．':'教員・学内（その他）・その他は自動採番されます．';
+            }
+            function fetchAndSetNextId(){
+                Toast.info("自動採番は仮採番機能です。");
+                DOM.reg_sid.value = "AUTO-" + Math.floor(Math.random() * 10000); // 簡易モック
+            }
+            function clear(){
+                getElement('reg_email').value=''; getElement('reg_ln').value=''; getElement('reg_fn').value=''; getElement('reg_grade').value='';
+                DOM.reg_role.value='学生'; onRoleChange(); DOM.reg_sid.value=''; getElement('reg_admin_flag').checked=false; getElement('reg_pass_admin').value='';
+            }
+            async function create(){
+                const email=getElement('reg_email').value.trim(), passUser=getElement('reg_pass_user').value, ln=getElement('reg_ln').value.trim(), fn=getElement('reg_fn').value.trim();
+                const grade=getElement('reg_grade').value||null, role=DOM.reg_role.value, sid=DOM.reg_sid.value.trim();
+                if(!email || !passUser || !ln || !fn){ Toast.error('必須項目が不足しています（メール，姓名）'); return; }
+                if(isManualRole(role) && !sid){ Toast.error('学籍番号を入力してください'); return; }
+                const jsonBody={ email, pass_user:passUser, last_name:ln, first_name:fn, grade, role, student_id:sid, admin_flag:getElement('reg_admin_flag').checked, pass_admin:getElement('reg_pass_admin').value || null };
+                try {
+                    const created=await fetchJSON('/admin/users/register', {method:'POST', body:JSON.stringify(jsonBody)});
+                    Toast.ok(`ユーザを作成しました（ID=${created.id||'?'}）．初期PWは ${created.initial_password||passUser} です．`);
+                    await Users.load(); clear(); Router.show('Users');
+                } catch (e) { Toast.error(`ユーザ登録失敗: ${e.message}`); }
+            }
+            onRoleChange();
+            return { onRoleChange, fetchAndSetNextId, clear, create };
+        })();
+
+        const Audit = (()=>{
+            async function load(){
+                const q=getElement('auditQ').value.trim();
+                try {
+                    const rows=await fetchJSON(`${URL_CONFIG.ADMIN_AUDIT}${q?`?q=${encodeURIComponent(q)}`:''}`);
+                    const tb=getElement('auditTbl').querySelector('tbody'); tb.innerHTML='';
+                    (rows||[]).forEach(r=>{
+                        const tr=document.createElement('tr');
+                        tr.innerHTML=`
+                            <td>${r.id}</td><td>${fmtDate(r.created_at)}</td><td>${r.action}</td>
+                            <td>${r.entity}</td><td>${r.entity_id||'-'}</td><td>${r.actor||'-'}</td>
+                            <td class="muted">${escapeHtml(r.meta||'')}</td>`;
+                        tb.appendChild(tr);
+                    });
+                } catch (e) { Toast.error(`監査ログロード失敗: ${e.message}`); }
+            }
+            return { load };
+        })();
+
+        document.addEventListener('DOMContentLoaded', ()=>{
+            getElement('tabInventory').onclick = ()=>Router.show('Inventory');
+            getElement('tabLoans').onclick = ()=>Router.show('Loans');
+            getElement('tabUsers').onclick = ()=>Router.show('Users');
+            getElement('tabUserReg').onclick = ()=>Router.show('UserReg');
+            getElement('tabSettings').onclick = ()=>Router.show('Settings');
+            getElement('tabAudit').onclick = ()=>Router.show('Audit');
+            DOM.loginForm.addEventListener('submit', login);
+            getElement('btnQrScan').onclick = QRReader.start;
+            DOM.btnLogout.onclick = logout;
+            getElement('btnSearchInv').onclick = Inventory.load;
+            getElement('btnClearInv').onclick = Inventory.clearFilters;
+            DOM.btnCreateItem.onclick= Inventory.create;
+            getElement('btnCloseDetail').onclick = Inventory.closeDetail;
+            onEnter('q', Inventory.load);
+            DOM.q.addEventListener('input', debounce(Inventory.load, 300));
+            getElement('btnSearchLoan').onclick = Loans.load;
+            DOM.btnCreateLoan.onclick = Loans.create;
+            getElement('btnCloseLoanDetail').onclick = Loans.closeDetail;
+            onEnter('loanQ', Loans.load);
+            DOM.activeOnly.addEventListener('change', Loans.load);
+            DOM.loanQ.addEventListener('input', debounce(Loans.load, 300));
+            getElement('btnReloadUsers').onclick = Users.load;
+            getElement('btnUserSave').onclick = Users.saveDetail;
+            getElement('btnSetPassword').onclick = Users.setPassword;
+            getElement('btnPromote').onclick = Users.promote;
+            getElement('btnUserCreate').onclick = UserReg.create;
+            getElement('btnUserClear').onclick = UserReg.clear;
+            DOM.reg_role.addEventListener('change', UserReg.onRoleChange);
+            DOM.btnRecalc.onclick = UserReg.fetchAndSetNextId;
+            getElement('btnSearchAudit').onclick = Audit.load;
+            onEnter('auditQ', Audit.load);
+            DOM.detailBackdrop.addEventListener('click', (e)=>{ if (e.target.id === 'detailBackdrop') { Inventory.closeDetail(); Loans.closeDetail(); } });
+            getElement('confirmBackdrop').addEventListener('click', (e)=>{ if (e.target.id === 'confirmBackdrop') { Confirm.hide(); } });
+            const today = new Date().toISOString().split('T')[0];
+            if (DOM.loanDueDate) DOM.loanDueDate.min = today;
+            
+            const token = localStorage.getItem('lab_server_admin_token');
+            if (token && token !== 'null' && token !== 'undefined' && token.length > 20) {
+                State.token = token;
+                DOM.loginSec.style.display = 'none';
+                DOM.btnLogout.style.display = 'inline-block';
+                DOM.tabs.style.display = 'flex';
+                Router.restore();
+            } else {
+                DOM.loginSec.style.display = 'block';
+                DOM.tabs.style.display = 'none';
+                DOM.btnLogout.style.display = 'none';
+            }
+        });
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+</body>
+</html>

@@ -36,6 +36,9 @@ class Table {
   _clearCache() {
     const cache = CacheService.getScriptCache();
     cache.remove('DB_CACHE_' + this.sheetName);
+    
+    // ★ 追加：DB全体が更新されたことを示すタイムスタンプを更新
+    cache.put('DB_LAST_UPDATE', new Date().getTime().toString(), 21600);
   }
 
   getAll() {
@@ -505,11 +508,14 @@ addRoute('GET', /^\/sync$/, (req) => {
   });
 
   // ベースとなる返却データ（一般・管理者共通）
+  const cache = CacheService.getScriptCache();
+  const dbTimestamp = cache.get('DB_LAST_UPDATE') || new Date().getTime().toString();
+
   let response = {
     items: itemsWithCat,
     categories: categories,
     loans: loansWithNames,
-    timestamp: new Date().getTime()
+    timestamp: parseInt(dbTimestamp)
   };
 
   // 管理者の場合のみ、全ユーザー情報と監査ログを追加でレスポンスに含める
@@ -523,6 +529,19 @@ addRoute('GET', /^\/sync$/, (req) => {
   }
 
   return response;
+});
+
+// --- 軽量な更新チェック ---
+addRoute('GET', /^\/check_update$/, (req) => {
+  getCurrentUser(req);
+  const clientTs = parseInt(req.parameter.ts || '0');
+  const cache = CacheService.getScriptCache();
+  const serverTs = parseInt(cache.get('DB_LAST_UPDATE') || '0');
+  
+  return {
+    needs_update: serverTs > clientTs,
+    server_timestamp: serverTs
+  };
 });
 
 // ==========================================

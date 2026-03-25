@@ -503,7 +503,7 @@
                     if (data && data.detail) {
                         Toast.error(`${path}：${data.detail}`); throw new Error(data.detail);
                     }
-                    return data.items !== undefined ? data.items : data;
+                    return data;
                 }
                 return r.text();
             } catch(e) { console.error(e); throw e; }
@@ -520,6 +520,10 @@
                 Store.loans = data.loans || [];
                 Store.users = data.users || [];
                 Store.audit = data.audit || [];
+                
+                // ★管理画面用ストアも永続化（任意だが、リロード対策）
+                localStorage.setItem('monono_admin_store', JSON.stringify(Store));
+                
                 document.body.style.cursor = 'default';
 
                 // 現在開いているタブを再描画

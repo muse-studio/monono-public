@@ -285,7 +285,7 @@ const App = (() => {
             if (data && data.detail) {
                 alert(`エラー: ${data.detail}`); throw new Error(data.detail);
             }
-            return data.items !== undefined ? data.items : data;
+            return data;
         }
         return r.text();
     }
@@ -300,6 +300,7 @@ const App = (() => {
       try {
           const j = await fetchJSON('/token', { method: 'POST', body: JSON.stringify({username, password}) });
           token = j.access_token;
+          localStorage.setItem('monono_token', token);
 
           if (j.must_change === true || j.must_change === 'true'){
             document.getElementById('loginSec').style.display='none';
@@ -337,17 +338,26 @@ const App = (() => {
       Router.show('List');
     }
 
-    function logout(){ token=null; location.reload(); }
+    function logout(){ 
+      token=null; 
+      localStorage.removeItem('monono_token');
+      localStorage.removeItem('monono_store');
+      location.reload(); 
+    }
 
     // ★大改修：一括でデータを取得し、ローカルに保存する
     async function refreshAll(){
       try {
-        document.body.style.cursor = 'wait'; // マウスをくるくるにする
+        document.body.style.cursor = 'wait'; 
         const data = await fetchJSON('/sync');
         store.items = data.items || [];
         store.categories = data.categories || [];
         store.loans = data.loans || [];
         store.timestamp = data.timestamp || Date.now();
+        
+        // ★永続化
+        localStorage.setItem('monono_store', JSON.stringify(store));
+        
         document.body.style.cursor = 'default';
 
         // 取得したローカルデータを使って画面を描画
@@ -360,6 +370,43 @@ const App = (() => {
       }
     }
 
+    // ★追加：初期化とバックグラウンド同期
+    async function init() {
+      // 1. LocalStorageから復元
+      const savedToken = localStorage.getItem('monono_token');
+      const savedStore = localStorage.getItem('monono_store');
+      
+      if (savedToken) {
+        token = savedToken;
+        if (savedStore) {
+          try {
+            store = JSON.parse(savedStore);
+            // キャッシュがあれば即座にUIを表示（爆速！）
+            afterLoginUI();
+            Inventory.init();
+            Active.load();
+            History.load();
+          } catch(e) { console.error("Store parse error", e); }
+        } else {
+          // トークンはあるがデータがない場合
+          afterLoginUI();
+          await refreshAll();
+          return;
+        }
+
+        // 2. バックグラウンドで更新チェック
+        try {
+          const check = await fetchJSON(`/check_update?ts=${store.timestamp}`);
+          if (check.needs_update) {
+            console.log("Update detected, syncing in background...");
+            await refreshAll();
+          } else {
+            console.log("Data is up to date.");
+          }
+        } catch(e) { console.warn("Background sync failed", e); }
+      }
+    }
+
     function jumpBorrow(code,name){
       document.getElementById('loanCode').value = code || '';
       document.getElementById('loanName').value = name || '';
@@ -367,7 +414,7 @@ const App = (() => {
     }
 
     // ★ store を外部から触れるようにエクスポート
-    return { fetchJSON, login, logout, refreshAll, changePassword, jumpBorrow, esc, store };
+    return { fetchJSON, login, logout, refreshAll, changePassword, jumpBorrow, esc, store, init };
   })();
 
   const Router = (() => {
@@ -721,6 +768,7 @@ const App = (() => {
 
     return { start, stop };
   })();
+    App.init();
   </script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 </body>

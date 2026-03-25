@@ -511,9 +511,10 @@
 
         async function refreshAll(targetTables = null) {
             if (!State.token) return;
+            // 配列でない（Eventオブジェクトなどが渡された）場合は null (全同期) 扱いにする
+            const tables = Array.isArray(targetTables) ? targetTables : null;
             try {
-                const query = targetTables ? `?tables=${targetTables.join(',')}` : '';
-                const data = await fetchJSON('/sync' + query);
+                const query = tables ? `?tables=${tables.join(',')}` : '';
                 
                 if (data.items) { Store.items = data.items; Store.ts.Items = data.ts_Items; }
                 if (data.categories) { Store.categories = data.categories; Store.ts.Categories = data.ts_Categories; }
@@ -1125,21 +1126,23 @@
                 // 2. とりあえず表示
                 Router.restore();
 
-                // 3. バックグラウンドで差分同期
-                try {
-                    const status = await fetchJSON('/check_update');
-                    const needed = [];
-                    if ((status.Items || 0) > (Store.ts.Items || 0)) needed.push('Items');
-                    if ((status.Categories || 0) > (Store.ts.Categories || 0)) needed.push('Categories');
-                    if ((status.Loans || 0) > (Store.ts.Loans || 0)) needed.push('Loans');
-                    if ((status.Users || 0) > (Store.ts.Users || 0)) needed.push('Users');
-                    if ((status.Audit || 0) > (Store.ts.Audit || 0)) needed.push('Audit');
+                // 3. バックグラウンドで差分同期 (非ブロッキング)
+                (async () => {
+                  try {
+                      const status = await fetchJSON('/check_update');
+                      const needed = [];
+                      if ((status.Items || 0) > (Store.ts.Items || 0)) needed.push('Items');
+                      if ((status.Categories || 0) > (Store.ts.Categories || 0)) needed.push('Categories');
+                      if ((status.Loans || 0) > (Store.ts.Loans || 0)) needed.push('Loans');
+                      if ((status.Users || 0) > (Store.ts.Users || 0)) needed.push('Users');
+                      if ((status.Audit || 0) > (Store.ts.Audit || 0)) needed.push('Audit');
 
-                    if (needed.length > 0) {
-                        console.log("Admin syncing tables:", needed);
-                        await refreshAll(needed);
-                    }
-                } catch(e) {}
+                      if (needed.length > 0) {
+                          console.log("Admin syncing tables:", needed);
+                          await refreshAll(needed);
+                      }
+                  } catch(e) { console.warn("Admin sync failed", e); }
+                })();
             } else {
                 DOM.loginSec.style.display = 'block';
                 DOM.tabs.style.display = 'none';

@@ -121,12 +121,21 @@ class Table {
     const item = (typeof id_or_item === 'object') ? id_or_item : this.findById(id_or_item);
     if (!item) throw new Error("Record not found");
 
+    // 行データを一括取得
+    const rowRange = sheet.getRange(item._rowIndex, 1, 1, this.headers.length);
+    const rowValues = rowRange.getValues()[0];
+    let changed = false;
+
     this.headers.forEach((h, i) => {
       if (data[h] !== undefined && h !== 'id') {
-        sheet.getRange(item._rowIndex, i + 1).setValue(data[h]);
+        rowValues[i] = data[h];
         item[h] = data[h]; // オブジェクト自体も更新
+        changed = true;
       }
     });
+    
+    // 一括書き込み
+    if (changed) rowRange.setValues([rowValues]);
     
     // キャッシュをインプレースで更新（再読み込みを避ける）
     const items = this.getAll();
@@ -518,7 +527,8 @@ addRoute('POST', /^\/me\/password$/, (req) => {
 addRoute('GET', /^\/sync$/, (req) => {
   const user = getCurrentUser(req);
   const isAdmin = (user.is_admin === true || user.is_admin === 'true');
-  const targetTables = req.parameter.tables ? req.parameter.tables.split(',') : ['Items', 'Categories', 'Loans'];
+  const defaultTables = isAdmin ? ['Items', 'Categories', 'Loans', 'Users', 'Audit'] : ['Items', 'Categories', 'Loans'];
+  const targetTables = req.parameter.tables ? req.parameter.tables.split(',') : defaultTables;
   
   let response = {};
   const cache = CacheService.getScriptCache();

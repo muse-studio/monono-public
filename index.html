@@ -240,6 +240,7 @@
   const GAS_URL = "https://script.google.com/macros/s/AKfycbykCzvGmlV5CRPrZwGREiLnT_PasBLsyXCQtTaWJu0zCUePpezN4QYaSVBUh1LNf-5nLw/exec"; 
 
 const App = (() => {
+    let token = null;
     let store = { items: [], categories: [], loans: [], ts: {} };
     let currentUserId = null;
 

@@ -240,9 +240,8 @@
   const GAS_URL = "https://script.google.com/macros/s/AKfycbykCzvGmlV5CRPrZwGREiLnT_PasBLsyXCQtTaWJu0zCUePpezN4QYaSVBUh1LNf-5nLw/exec"; 
 
 const App = (() => {
-    let token = null;
-    // ★追加：ローカルにデータを保持する「ストア」
-    let store = { items: [], categories: [], loans: [], timestamp: 0 };
+    let store = { items: [], categories: [], loans: [], ts: {} };
+    let currentUserId = null;
 
     // GAS用 fetch コアロジック (変更なし)
     async function fetchJSON(path, opt = {}) {
@@ -300,7 +299,9 @@ const App = (() => {
       try {
           const j = await fetchJSON('/token', { method: 'POST', body: JSON.stringify({username, password}) });
           token = j.access_token;
+          currentUserId = j.student_id; 
           localStorage.setItem('monono_token', token);
+          localStorage.setItem('monono_last_user_id', currentUserId);
 
           if (j.must_change === true || j.must_change === 'true'){
             document.getElementById('loginSec').style.display='none';
@@ -310,8 +311,8 @@ const App = (() => {
           }
 
           afterLoginUI();
-          await refreshAll();
-      } catch(e) {}
+          await init(); // refreshAll ではなく init で差分同期
+      } catch(e) { console.error(e); }
     }
 
     async function changePassword(event){
@@ -341,69 +342,94 @@ const App = (() => {
     function logout(){ 
       token=null; 
       localStorage.removeItem('monono_token');
-      localStorage.removeItem('monono_store');
+      // ★ 共通マスタ(items, categories)は残し、個人データだけクリアして保存
+      store.loans = [];
+      saveStore();
       location.reload(); 
     }
 
-    // ★大改修：一括でデータを取得し、ローカルに保存する
-    async function refreshAll(){
-      try {
-        document.body.style.cursor = 'wait'; 
-        const data = await fetchJSON('/sync');
-        store.items = data.items || [];
-        store.categories = data.categories || [];
-        store.loans = data.loans || [];
-        store.timestamp = data.timestamp || Date.now();
-        
-        // ★永続化
-        localStorage.setItem('monono_store', JSON.stringify(store));
-        
-        document.body.style.cursor = 'default';
+    function saveStore() {
+      // 共通データ（全ユーザー）
+      localStorage.setItem('monono_common', JSON.stringify({
+        items: store.items,
+        categories: store.categories,
+        ts: { Items: store.ts.Items, Categories: store.ts.Categories }
+      }));
+      // ユーザー別データ
+      if (currentUserId) {
+        localStorage.setItem(`monono_user_${currentUserId}`, JSON.stringify({
+          loans: store.loans,
+          ts: { Loans: store.ts.Loans }
+        }));
+      }
+    }
 
-        // 取得したローカルデータを使って画面を描画
+    // ★大改修：一括でデータを取得し、ローカルに保存する
+    async function refreshAll(targetTables = null){
+      try {
+        const query = targetTables ? `?tables=${targetTables.join(',')}` : '';
+        const data = await fetchJSON('/sync' + query);
+        
+        if (data.items) { store.items = data.items; store.ts.Items = data.ts_Items; }
+        if (data.categories) { store.categories = data.categories; store.ts.Categories = data.ts_Categories; }
+        if (data.loans) { store.loans = data.loans; store.ts.Loans = data.ts_Loans; }
+        
+        saveStore();
+        
         Inventory.init();
         Active.load();
         History.load();
-      } catch (e) {
-        document.body.style.cursor = 'default';
-        console.error(e);
-      }
+      } catch (e) { console.error(e); }
     }
 
     // ★追加：初期化とバックグラウンド同期
     async function init() {
-      // 1. LocalStorageから復元
       const savedToken = localStorage.getItem('monono_token');
-      const savedStore = localStorage.getItem('monono_store');
-      
+      currentUserId = localStorage.getItem('monono_last_user_id');
+
+      // 1. 公共キャッシュの復元
+      const common = JSON.parse(localStorage.getItem('monono_common') || '{}');
+      store.items = common.items || [];
+      store.categories = common.categories || [];
+      store.ts.Items = common.ts?.Items || 0;
+      store.ts.Categories = common.ts?.Categories || 0;
+
       if (savedToken) {
         token = savedToken;
-        if (savedStore) {
-          try {
-            store = JSON.parse(savedStore);
-            // キャッシュがあれば即座にUIを表示（爆速！）
-            afterLoginUI();
-            Inventory.init();
-            Active.load();
-            History.load();
-          } catch(e) { console.error("Store parse error", e); }
-        } else {
-          // トークンはあるがデータがない場合
+        // 2. ユーザー別キャッシュの復元
+        if (currentUserId) {
+          const userCache = JSON.parse(localStorage.getItem(`monono_user_${currentUserId}`) || '{}');
+          store.loans = userCache.loans || [];
+          store.ts.Loans = userCache.ts?.Loans || 0;
+        }
+
+        // 3. キャッシュがあれば即座にUI表示
+        if (store.items.length > 0) {
           afterLoginUI();
-          await refreshAll();
+          Inventory.init();
+          Active.load();
+          History.load();
+        } else {
+          afterLoginUI();
+          await refreshAll(); // キャッシュが全くなければ初回同期
           return;
         }
 
-        // 2. バックグラウンドで更新チェック
+        // 4. バックグラウンドで「差分だけ」同期
         try {
-          const check = await fetchJSON(`/check_update?ts=${store.timestamp}`);
-          if (check.needs_update) {
-            console.log("Update detected, syncing in background...");
-            await refreshAll();
+          const serverStatus = await fetchJSON('/check_update');
+          const needed = [];
+          if ((serverStatus.Items || 0) > (store.ts.Items || 0)) needed.push('Items');
+          if ((serverStatus.Categories || 0) > (store.ts.Categories || 0)) needed.push('Categories');
+          if ((serverStatus.Loans || 0) > (store.ts.Loans || 0)) needed.push('Loans');
+          
+          if (needed.length > 0) {
+            console.log("Updating tables:", needed);
+            await refreshAll(needed);
           } else {
-            console.log("Data is up to date.");
+            console.log("Everything is up to date.");
           }
-        } catch(e) { console.warn("Background sync failed", e); }
+        } catch(e) { console.warn("Sync failed", e); }
       }
     }
 

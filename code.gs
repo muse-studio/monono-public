@@ -33,12 +33,22 @@ class Table {
   }
 
   // ★ 追加：キャッシュを削除する機能
-  _clearCache() {
+  _clearCache(bumpTs = true) {
     const cache = CacheService.getScriptCache();
     cache.remove('DB_CACHE_' + this.sheetName);
     
-    // ★ 追加：DB全体が更新されたことを示すタイムスタンプを更新
-    cache.put('DB_LAST_UPDATE', new Date().getTime().toString(), 21600);
+    // ★ 追加：テーブルごとの最終更新タイムスタンプを更新
+    if (bumpTs) {
+      cache.put('TS_' + this.sheetName, new Date().getTime().toString(), 21600);
+    }
+  }
+
+  // ★ 追加：キャッシュを保存する機能
+  _putCache(data) {
+    const cache = CacheService.getScriptCache();
+    try {
+      cache.put('DB_CACHE_' + this.sheetName, JSON.stringify(data), 21600);
+    } catch (e) { /* データ量が多すぎて入らない場合は無視 */ }
   }
 
   getAll() {
@@ -92,23 +102,46 @@ class Table {
     const row = this.headers.map(h => data[h] !== undefined ? data[h] : '');
     sheet.appendRow(row);
     
-    this._clearCache(); // ★ 追加：データが新しくなったので古いキャッシュを捨てる
-    return this.findById(id);
+    // キャッシュを更新（末尾に追加）
+    const items = this.getAll();
+    data._rowIndex = sheet.getLastRow();
+    items.push(data);
+    this._putCache(items);
+    
+    // タイムスタンプ更新
+    const cache = CacheService.getScriptCache();
+    cache.put('TS_' + this.sheetName, new Date().getTime().toString(), 21600);
+
+    return data;
   }
 
-  update(id, data) {
+  // id_or_item: ID文字列、または既に取得済みのオブジェクト
+  update(id_or_item, data, options = { bumpTs: true }) {
     const sheet = this._getSheet();
-    const item = this.findById(id);
+    const item = (typeof id_or_item === 'object') ? id_or_item : this.findById(id_or_item);
     if (!item) throw new Error("Record not found");
 
     this.headers.forEach((h, i) => {
       if (data[h] !== undefined && h !== 'id') {
         sheet.getRange(item._rowIndex, i + 1).setValue(data[h]);
+        item[h] = data[h]; // オブジェクト自体も更新
       }
     });
     
-    this._clearCache(); // ★ 追加：データが更新されたので古いキャッシュを捨てる
-    return this.findById(id);
+    // キャッシュをインプレースで更新（再読み込みを避ける）
+    const items = this.getAll();
+    const idx = items.findIndex(i => i.id === item.id);
+    if (idx !== -1) {
+      items[idx] = item;
+      this._putCache(items);
+    }
+
+    if (options.bumpTs) {
+      const cache = CacheService.getScriptCache();
+      cache.put('TS_' + this.sheetName, new Date().getTime().toString(), 21600);
+    }
+
+    return item;
   }
 
   delete(id) {
@@ -116,7 +149,7 @@ class Table {
     const item = this.findById(id);
     if (item) {
       sheet.deleteRow(item._rowIndex);
-      this._clearCache(); // ★ 追加：データが削除されたので古いキャッシュを捨てる
+      this._clearCache(true); // 削除は行番号がずれるためキャッシュをクリア
       return true;
     }
     return false;
@@ -231,8 +264,14 @@ addRoute('POST', /^\/token$/, (req) => {
     throw { status: 401, message: "login failed" };
   }
   const token = generateToken();
-  DB.Users.update(user.id, { access_token: token, last_login_at: new Date() });
-  return { access_token: token, token_type: "bearer", must_change: user.must_change_password === 'true' };
+  DB.Users.update(user, { access_token: token, last_login_at: new Date() }, { bumpTs: false });
+  return { 
+    access_token: token, 
+    token_type: "bearer", 
+    must_change: user.must_change_password === 'true',
+    student_id: user.student_id,
+    is_admin: (user.is_admin === true || user.is_admin === 'true')
+  };
 });
 
 addRoute('GET', /^\/me$/, (req) => {
@@ -477,71 +516,75 @@ addRoute('POST', /^\/me\/password$/, (req) => {
 
 // --- 追加：フロントエンド高速化のための全データ一括同期ルート（改・管理者対応版） ---
 addRoute('GET', /^\/sync$/, (req) => {
-  const user = getCurrentUser(req); // ログイン必須
+  const user = getCurrentUser(req);
   const isAdmin = (user.is_admin === true || user.is_admin === 'true');
+  const targetTables = req.parameter.tables ? req.parameter.tables.split(',') : ['Items', 'Categories', 'Loans'];
   
-  const items = DB.Items.getAll();
-  const categories = DB.Categories.getAll();
-  let loans = DB.Loans.getAll();
-  
-  // 一般ユーザーの場合は自分の貸出のみに絞る（管理者は全件取得）
-  if (!isAdmin) {
-    loans = loans.filter(l => l.user_id == user.id);
+  let response = {};
+  const cache = CacheService.getScriptCache();
+
+  if (targetTables.includes('Items')) {
+    const items = DB.Items.getAll();
+    const categories = DB.Categories.getAll();
+    response.items = items.map(item => {
+      const cat = categories.find(c => c.id == item.category_id);
+      item.category_name = cat ? cat.name : null;
+      return item;
+    });
+    response.ts_Items = parseInt(cache.get('TS_Items') || '0');
   }
 
-  const itemsWithCat = items.map(item => {
-    const cat = categories.find(c => c.id == item.category_id);
-    item.category_name = cat ? cat.name : null;
-    return item;
-  });
+  if (targetTables.includes('Categories')) {
+    response.categories = DB.Categories.getAll();
+    response.ts_Categories = parseInt(cache.get('TS_Categories') || '0');
+  }
 
-  const users = DB.Users.getAll();
-  const loansWithNames = loans.map(l => {
-    const item = items.find(i => i.id == l.item_id) || {};
-    const u = users.find(u => u.id == l.user_id) || {};
-    return {
-      ...l,
-      item_name: item.product_name || '不明',
-      item_code: item.code || '',
-      borrower: (u.last_name || '') + ' ' + (u.first_name || '')
-    };
-  });
-
-  // ベースとなる返却データ（一般・管理者共通）
-  const cache = CacheService.getScriptCache();
-  const dbTimestamp = cache.get('DB_LAST_UPDATE') || new Date().getTime().toString();
-
-  let response = {
-    items: itemsWithCat,
-    categories: categories,
-    loans: loansWithNames,
-    timestamp: parseInt(dbTimestamp)
-  };
-
-  // 管理者の場合のみ、全ユーザー情報と監査ログを追加でレスポンスに含める
-  if (isAdmin) {
-    response.users = users.map(u => {
-      delete u.password_hash; // パスワード情報は絶対に送らない
-      delete u.access_token;
-      return u;
+  if (targetTables.includes('Loans')) {
+    let loans = DB.Loans.getAll();
+    if (!isAdmin) loans = loans.filter(l => l.user_id == user.id);
+    
+    const items = DB.Items.getAll();
+    const users = DB.Users.getAll();
+    response.loans = loans.map(l => {
+      const item = items.find(i => i.id == l.item_id) || {};
+      const u = users.find(u => u.id == l.user_id) || {};
+      return {
+        ...l,
+        item_name: item.product_name || '不明',
+        item_code: item.code || '',
+        borrower: (u.last_name || '') + ' ' + (u.first_name || '')
+      };
     });
-    response.audit = DB.Audit.getAll().reverse();
+    response.ts_Loans = parseInt(cache.get('TS_Loans') || '0');
+  }
+
+  if (isAdmin) {
+    if (targetTables.includes('Users')) {
+      response.users = DB.Users.getAll().map(u => {
+        delete u.password_hash;
+        delete u.access_token;
+        return u;
+      });
+      response.ts_Users = parseInt(cache.get('TS_Users') || '0');
+    }
+    if (targetTables.includes('Audit')) {
+      response.audit = DB.Audit.getAll().reverse();
+      response.ts_Audit = parseInt(cache.get('TS_Audit') || '0');
+    }
   }
 
   return response;
 });
 
-// --- 軽量な更新チェック ---
 addRoute('GET', /^\/check_update$/, (req) => {
   getCurrentUser(req);
-  const clientTs = parseInt(req.parameter.ts || '0');
   const cache = CacheService.getScriptCache();
-  const serverTs = parseInt(cache.get('DB_LAST_UPDATE') || '0');
-  
-  return {
-    needs_update: serverTs > clientTs,
-    server_timestamp: serverTs
-  };
+  const tables = ['Items', 'Categories', 'Loans', 'Users', 'Audit'];
+  const status = {};
+  tables.forEach(t => {
+    status[t] = parseInt(cache.get('TS_' + t) || '0');
+  });
+  return status;
 });
 
 // ==========================================

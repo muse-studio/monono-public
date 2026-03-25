@@ -867,7 +867,15 @@
                         days = diff;
                     }
                     if(!item_code){ Toast.info('コードは必須です'); return; }
-                    await fetchJSON(URL_CONFIG.LOANS,{method:'POST',body:JSON.stringify({item_code, qty, days})});
+                    await fetchJSON(URL_CONFIG.LOANS, {
+                        method: 'POST', 
+                        body: JSON.stringify({
+                            student_id: student_id || null, 
+                            item_code, 
+                            qty, 
+                            days
+                        })
+                    });
                     Toast.ok('貸出登録しました'); 
                     await refreshAll(); // ★同期
                 } catch (e) { Toast.error(`貸出登録失敗: ${e.message}`); }
@@ -1015,9 +1023,16 @@
                 DOM.btnRecalc.disabled=isManual;
                 DOM.sidHint.textContent=isManual?'学生・学内（学生）は手入力です．':'教員・学内（その他）・その他は自動採番されます．';
             }
-            function fetchAndSetNextId(){
-                Toast.info("自動採番は仮採番機能です。");
-                DOM.reg_sid.value = "AUTO-" + Math.floor(Math.random() * 10000);
+            async function fetchAndSetNextId(){
+                try {
+                    const res = await fetchJSON(URL_CONFIG.ADMIN_NEXT_STUDENT_ID);
+                    if (res.next_id) {
+                        DOM.reg_sid.value = res.next_id;
+                        Toast.ok("学籍番号を自動生成しました。");
+                    }
+                } catch (e) {
+                    DOM.reg_sid.value = "AUTO-" + Math.floor(Math.random() * 10000);
+                }
             }
             function clear(){
                 getElement('reg_email').value=''; getElement('reg_ln').value=''; getElement('reg_fn').value=''; getElement('reg_grade').value='';

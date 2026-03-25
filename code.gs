@@ -322,6 +322,18 @@ addRoute('POST', /^\/admin\/items$/, (req) => {
   return newItem;
 });
 
+// 管理者用：備品情報の更新
+addRoute('PATCH', /^\/admin\/items\/([a-zA-Z0-9-]+)$/, (req) => {
+  const admin = getCurrentUser(req);
+  requireAdmin(admin);
+  const itemId = req.pathParams[0];
+  const data = req.payload;
+  
+  const updated = DB.Items.update(itemId, data);
+  auditLog("update", "item", admin.email, updated.code);
+  return updated;
+});
+
 addRoute('DELETE', /^\/admin\/items\/([a-zA-Z0-9-]+)$/, (req) => {
   const admin = getCurrentUser(req);
   requireAdmin(admin);
@@ -380,6 +392,45 @@ addRoute('POST', /^\/loans\/me$/, (req) => {
   return { id: loan.id };
 });
 
+// 管理者用：貸出登録 (代理登録)
+addRoute('POST', /^\/loans$/, (req) => {
+  const admin = getCurrentUser(req);
+  requireAdmin(admin);
+  const { item_code, qty = 1, days, student_id } = req.payload;
+
+  const item = DB.Items.findOne('code', item_code);
+  if (!item) throw { status: 404, message: "在庫が見つかりません" };
+  if (parseInt(item.stock) < parseInt(qty)) {
+    throw { status: 400, message: "在庫不足" };
+  }
+
+  let targetUser;
+  if (student_id) {
+    targetUser = DB.Users.findOne('student_id', student_id);
+    if (!targetUser) throw { status: 404, message: "学籍番号に一致するユーザが見つかりません" };
+  } else {
+    targetUser = admin; // 指定なしは自分
+  }
+
+  let dueAt = "";
+  if (days) {
+    const d = new Date();
+    d.setDate(d.getDate() + parseInt(days));
+    dueAt = d;
+  }
+
+  const loan = DB.Loans.insert({
+    user_id: targetUser.id,
+    item_id: item.id,
+    qty: qty,
+    loaned_at: new Date(),
+    due_at: dueAt
+  });
+  
+  auditLog("create_proxy", "loan", admin.email, `${targetUser.email}: ${item_code} x${qty}`);
+  return { id: loan.id };
+});
+
 addRoute('POST', /^\/loans\/return$/, (req) => {
   const user = getCurrentUser(req);
   const { loan_id } = req.payload;
@@ -430,6 +481,21 @@ addRoute('GET', /^\/categories$/, (req) => {
   return DB.Categories.getAll();
 });
 
+// 管理者用：カテゴリ新規作成
+addRoute('POST', /^\/admin\/categories$/, (req) => {
+  const admin = getCurrentUser(req);
+  requireAdmin(admin);
+  const { name } = req.payload;
+  
+  if (DB.Categories.findOne('name', name)) {
+    return DB.Categories.findOne('name', name);
+  }
+  
+  const newCat = DB.Categories.insert({ name });
+  auditLog("create", "category", admin.email, name);
+  return newCat;
+});
+
 // 管理者用：ユーザ一覧の取得
 addRoute('GET', /^\/admin\/users$/, (req) => {
   const admin = getCurrentUser(req);
@@ -439,6 +505,96 @@ addRoute('GET', /^\/admin\/users$/, (req) => {
     delete u.access_token;
     return u;
   });
+});
+
+// 管理者用：ユーザ登録
+addRoute('POST', /^\/admin\/users\/register$/, (req) => {
+  const admin = getCurrentUser(req);
+  requireAdmin(admin);
+  const data = req.payload;
+
+  if (DB.Users.findOne('email', data.email)) {
+    throw { status: 400, message: "このメールアドレスは既に登録されています" };
+  }
+
+  const user = DB.Users.insert({
+    email: data.email,
+    password_hash: hashPassword(data.pass_user),
+    last_name: data.last_name,
+    first_name: data.first_name,
+    student_id: data.student_id,
+    grade: data.grade,
+    dob: data.dob || null,
+    is_admin: data.admin_flag === true || data.admin_flag === 'true',
+    must_change_password: true,
+    created_at: new Date()
+  });
+
+  if (user.is_admin && data.pass_admin) {
+    // 管理者パスワードが別途指定されている場合はそちらもセットする
+    DB.Users.update(user.id, { password_hash: hashPassword(data.pass_admin) });
+  }
+
+  auditLog("create", "user", admin.email, user.email);
+  return { id: user.id, email: user.email };
+});
+
+// 管理者用：ユーザ情報更新
+addRoute('PATCH', /^\/admin\/users\/([a-zA-Z0-9-]+)$/, (req) => {
+  const admin = getCurrentUser(req);
+  requireAdmin(admin);
+  const userId = req.pathParams[0];
+  const data = req.payload;
+  
+  const updated = DB.Users.update(userId, data);
+  auditLog("update", "user", admin.email, updated.email);
+  return updated;
+});
+
+// 管理者用：ユーザ削除
+addRoute('DELETE', /^\/admin\/users\/([a-zA-Z0-9-]+)$/, (req) => {
+  const admin = getCurrentUser(req);
+  requireAdmin(admin);
+  const userId = req.pathParams[0];
+  const user = DB.Users.findById(userId);
+  if (!user) throw { status: 404, message: "User not found" };
+  
+  DB.Users.delete(userId);
+  auditLog("delete", "user", admin.email, user.email);
+  return { ok: true };
+});
+
+// 管理者用：パスワード強制変更
+addRoute('POST', /^\/admin\/users\/([a-zA-Z0-9-]+)\/password$/, (req) => {
+  const admin = getCurrentUser(req);
+  requireAdmin(admin);
+  const userId = req.pathParams[0];
+  const { new_password } = req.payload;
+  
+  DB.Users.update(userId, {
+    password_hash: hashPassword(new_password),
+    must_change_password: true
+  });
+  auditLog("password_reset", "user", admin.email, userId);
+  return { ok: true };
+});
+
+// 管理者用：管理者への昇格
+addRoute('POST', /^\/admin\/users\/promote$/, (req) => {
+  const admin = getCurrentUser(req);
+  requireAdmin(admin);
+  const { email, password } = req.payload;
+  
+  const target = DB.Users.findOne('email', email);
+  if (!target) throw { status: 404, message: "User not found" };
+  
+  DB.Users.update(target.id, {
+    is_admin: true,
+    password_hash: hashPassword(password) // 管理者用パスワードで上書き
+  });
+  
+  auditLog("promote", "user", admin.email, email);
+  return { ok: true };
 });
 
 // 管理者用：備品詳細の取得
@@ -595,6 +751,15 @@ addRoute('GET', /^\/check_update$/, (req) => {
     status[t] = parseInt(cache.get('TS_' + t) || '0');
   });
   return status;
+});
+
+// 管理者用：次の自動採番を取得
+addRoute('GET', /^\/admin\/student_id\/next$/, (req) => {
+  const admin = getCurrentUser(req);
+  requireAdmin(admin);
+  const users = DB.Users.getAll();
+  const nextNum = users.length + 1;
+  return { next_id: "AUTO-" + String(nextNum).padStart(4, '0') };
 });
 
 // ==========================================
